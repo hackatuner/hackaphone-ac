@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.3.2'
-local BUILD = 27
+local VERSION = '1.3.3'
+local BUILD = 28
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -9081,6 +9081,8 @@ function script.windowMain(dt)
     if not PHONE.locked and not IN.locked then IN.active = '__unlocked' end
   else
     IN.locked = IN.locked or SHEET.kind ~= nil
+    -- the expanded music/lap card sits over the widgets: while it's open, touches inside it belong to it only
+    if LIVE.expanded > 0.02 and hit(14, 10, SW - 14, 134) then IN.locked = true end
     compose()
   end
   XM.welcome.drawPhone()
