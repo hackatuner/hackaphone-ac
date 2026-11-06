@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.1.3'
-local BUILD = 16
+local VERSION = '1.1.4'
+local BUILD = 17
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -287,7 +287,7 @@ end
 -- ===========================================================================
 
 local D = { x = 0, y = 0, a = 1 }        -- current offset (window-local px) and alpha
-local SCREEN = { x = 10, y = 10, w = 352, h = 756, r = 46 } -- phone screen rect inside window
+local SCREEN = { x = 14, y = 14, w = 352, h = 756, r = 33 } -- phone screen rect inside window
 
 local function A(c, extra)
   local a = D.a * (extra or 1)
@@ -3604,7 +3604,7 @@ local BOTTOM = SH - 34          -- above home indicator
 local PHONE = { minimized = false, minimizeReason = nil, locked = false }
 PHONE_STATE = PHONE
 
-PHONE.BASE, PHONE.CAP = vec2(372, 776), vec2(372, 96)
+PHONE.BASE, PHONE.CAP = vec2(380, 784), vec2(380, 96)
 
 -- keeps the window exactly the size of the phone at the current scale (so it can never be squashed)
 function PHONE.applySize()
@@ -8476,15 +8476,15 @@ function script.windowMain(dt)
 
   -- phone body (design units; the whole phone scales together)
   local ws = PHONE.BASE
-  rect(0, 0, ws.x, ws.y, T.body, 56)
+  rect(0, 0, ws.x, ws.y, T.body, 47)
   -- rim: invisible until the cursor is over the phone, then it fades in with a soft accent edge
   PHONE.rimA = (PHONE.rimA or 0) + ((IN.hovered and 1 or 0) - (PHONE.rimA or 0)) * math.min(1, IN.dt * 10)
   if PHONE.rimA > 0.01 then
     local oa, ac_ = D.a, accent()
     D.a = oa * PHONE.rimA
-    rectLine(1, 1, ws.x - 1, ws.y - 1, rgbm(ac_.r, ac_.g, ac_.b, 0.22), 56, 5)
-    rectLine(1.5, 1.5, ws.x - 1.5, ws.y - 1.5, T.frame, 55, 2.5)
-    rectLine(3, 3, ws.x - 3, ws.y - 3, rgbm(1, 1, 1, 0.16), 53, 1)
+    rectLine(1, 1, ws.x - 1, ws.y - 1, rgbm(ac_.r, ac_.g, ac_.b, 0.22), 47, 5)
+    rectLine(1.5, 1.5, ws.x - 1.5, ws.y - 1.5, T.frame, 46, 2.5)
+    rectLine(3, 3, ws.x - 3, ws.y - 3, rgbm(1, 1, 1, 0.16), 45, 1)
     D.a = oa
   end
 
@@ -8542,7 +8542,7 @@ function script.windowMain(dt)
   if onEdge or PHONE.resizing then
     ui.setMouseCursor(type(ui.MouseCursor) == 'table' and ui.MouseCursor.ResizeNWSE or 6)
     local a = PHONE.resizing and 0.95 or 0.55
-    rectLine(2, 2, gx - 2, gy - 2, rgbm(accent().r, accent().g, accent().b, a * 0.8), 55, 3)
+    rectLine(2, 2, gx - 2, gy - 2, rgbm(accent().r, accent().g, accent().b, a * 0.8), 46, 3)
     for i = 0, 2 do line(gx - 14 - i * 8, gy - 6, gx - 6, gy - 14 - i * 8, rgbm(1, 1, 1, a), 2.5) end
     if PHONE.resizing then
       local label = string.format('%d%%', math.floor(k * 100 + 0.5))
@@ -8557,7 +8557,7 @@ function script.windowMain(dt)
     IN.active = '__move'
   end
   if PHONE.moving then
-    rect(0, 0, PHONE.BASE.x, PHONE.BASE.y, rgbm(1, 1, 1, 0.06), 56)
+    rect(0, 0, PHONE.BASE.x, PHONE.BASE.y, rgbm(1, 1, 1, 0.06), 47)
     local label = 'Drag to move'
     local w = measure(label, 13, F.sb).x + 28
     rect(gx / 2 - w / 2, 70, gx / 2 + w / 2, 98, rgbm(0, 0, 0, 0.75), 14)
