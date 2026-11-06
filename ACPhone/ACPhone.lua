@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '0.6.1'
-local BUILD = 7
+local VERSION = '0.6.2'
+local BUILD = 8
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -84,6 +84,7 @@ local S = ac.storage({
   wallMode = 'theme',
   wallPath = '',
   wallDim = 0.35,
+  musicBlur = true,
   iconStyle = 1,
   barStyle = 1,
   hiddenApps = '',
@@ -2214,8 +2215,9 @@ end
 
 -- draws an image filling the box (cropped, never stretched)
 function WALL.cover(path, x1, y1, x2, y2, rounding, tint)
-  local sz = ui.imageSize(path)
-  if not sz or sz.x <= 0 or sz.y <= 0 then return false end
+  local okS, sz = pcall(ui.imageSize, path)
+  if type(path) ~= 'string' and (not okS or not sz or sz.x <= 0) then sz = vec2(1, 1) end -- album art: assume square
+  if not okS or not sz or sz.x <= 0 or sz.y <= 0 then return false end
   local boxAR, imgAR = (x2 - x1) / (y2 - y1), sz.x / sz.y
   local uv1, uv2
   if imgAR > boxAR then
@@ -2225,8 +2227,29 @@ function WALL.cover(path, x1, y1, x2, y2, rounding, tint)
     local f = imgAR / boxAR
     uv1, uv2 = vec2(0, (1 - f) / 2), vec2(1, (1 + f) / 2)
   end
-  ui.drawImageRounded(path, P(x1, y1), P(x2, y2), A(tint or T.white), uv1, uv2, rounding or 0, ui.CornerFlags.All)
-  return true
+  return (pcall(ui.drawImageRounded, path, P(x1, y1), P(x2, y2), A(tint or T.white), uv1, uv2, rounding or 0, ui.CornerFlags.All))
+end
+
+-- album art wallpaper: blurred (or sharp) cover of the current song, cross-fading when the song changes
+WALL.musicKey, WALL.musicFade = nil, 1
+function WALL.music(x1, y1, x2, y2, rounding)
+  local m = MEDIA.now()
+  if not (m and m.hasCover) then return false end
+  local key = (m.title or '') .. '|' .. (m.artist or '')
+  if key ~= WALL.musicKey then WALL.musicKey, WALL.musicFade = key, 0 end
+  WALL.musicFade = math.min(1, WALL.musicFade + IN.dt / 0.6)
+  local oldA = D.a
+  D.a = D.a * WALL.musicFade
+  local ok
+  if S.musicBlur and ui.beginBlurring then
+    ui.beginBlurring()
+    ok = WALL.cover(m, x1 - 40, y1 - 40, x2 + 40, y2 + 40, 0)
+    ui.endBlurring(0.06)
+  else
+    ok = WALL.cover(m, x1, y1, x2, y2, rounding)
+  end
+  D.a = oldA
+  return ok
 end
 
 function WALL.saved()
@@ -4254,7 +4277,10 @@ function APPMOD.Themes.root()
     rect(px - 5, y - 5, px + pw + 5, y + ph + 5, rgbm(0.2, 0.2, 0.22, 1), 30)
     local wp = WALL.path()
     local th = THEME or THEMES[1]
-    if not (wp and WALL.cover(wp, px, y, px + pw, y + ph, 26)) then
+    local mArt = S.wallMode == 'music' and MEDIA.now()
+    if mArt and mArt.hasCover and WALL.cover(mArt, px, y, px + pw, y + ph, 26) then
+      if S.wallDim > 0 then rect(px, y, px + pw, y + ph, rgbm(0, 0, 0, S.wallDim), 26) end
+    elseif not (wp and WALL.cover(wp, px, y, px + pw, y + ph, 26)) then
       rect(px, y, px + pw, y + ph, th.bottom, 26)
       ui.drawRectFilledMultiColor(P(px, y + 26), P(px + pw, y + ph - 26), A(th.top), A(th.top), A(th.bottom), A(th.bottom))
     elseif S.wallDim > 0 then
@@ -4302,8 +4328,8 @@ function APPMOD.Themes.root()
 
     -- wallpaper
     y = W.sectionHeader('Wallpaper', y)
-    local modes = { 'theme', 'car', 'track', 'custom' }
-    local labels = { 'Theme', 'My car', 'Track', 'Photo' }
+    local modes = { 'theme', 'car', 'track', 'custom', 'music' }
+    local labels = { 'Theme', 'Car', 'Track', 'Photo', 'Music' }
     local cur = 1
     for i, m in ipairs(modes) do if S.wallMode == m then cur = i end end
     local ni = W.segmented('wp.mode', labels, cur, 16, y, SW - 32)
@@ -4329,6 +4355,10 @@ function APPMOD.Themes.root()
       if fired then WALL.import() end
       y = y + (math.floor(n / 4) + 1) * (tw * 1.7 + 8) + 4
       y = W.sectionFooter('Pick any image on your PC, 4K works great. It’s copied into the phone so it stays.', y)
+    elseif S.wallMode == 'music' then
+      W.groupBg(y, 1)
+      S.musicBlur = W.toggleRow('wp.blur', 'Blur album art', S.musicBlur, y, { first = true, last = true })
+      y = W.sectionFooter('Your wallpaper becomes the cover of the song that’s playing and changes with every track. With no song playing you get the theme wallpaper.', y + 46)
     elseif S.wallMode ~= 'theme' and not WALL.path() then
       y = W.sectionFooter(S.wallMode == 'car' and 'This skin has no preview image yet. Content Manager can generate one.' or 'This track has no preview image.', y)
     end
@@ -4748,7 +4778,15 @@ end
 local function wallpaper()
   local th = THEME or THEMES[1]
   local wp = WALL.path()
-  if wp and WALL.cover(wp, 0, 0, SW, SH, SCREEN.r) then
+  local musicArt = false
+  if S.wallMode == 'music' then
+    -- theme art underneath, so the cross-fade between songs looks smooth
+    rect(0, 0, SW, SH, th.bottom, SCREEN.r)
+    pushClip(0, 0, SW, SH)
+    musicArt = WALL.music(0, 0, SW, SH, SCREEN.r)
+    popClip()
+  end
+  if musicArt or (wp and WALL.cover(wp, 0, 0, SW, SH, SCREEN.r)) then
     if S.wallDim > 0 then rect(0, 0, SW, SH, rgbm(0, 0, 0, S.wallDim), SCREEN.r) end
     ui.drawRectFilledMultiColor(P(0, SH * 0.55), P(SW, SH), A(rgbm(0, 0, 0, 0)), A(rgbm(0, 0, 0, 0)), A(rgbm(0, 0, 0, 0.55)), A(rgbm(0, 0, 0, 0.55)))
     return

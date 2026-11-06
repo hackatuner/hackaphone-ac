@@ -1,12 +1,12 @@
 {
-  "version": "0.6.1",
-  "build": 7,
-  "notes": "Music controls fixed: play/pause, next and previous now control your PC's music player.",
+  "version": "0.6.2",
+  "build": 8,
+  "notes": "New: album art wallpaper. Personalize › Wallpaper › Music sets the current song's cover as your wallpaper, and it changes with every track.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 246252
+      "size": 248057
     },
     {
       "path": "manifest.ini",
@@ -16,7 +16,7 @@
     {
       "path": "README.md",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/README.md",
-      "size": 6502
+      "size": 6712
     },
     {
       "path": "icon.png",

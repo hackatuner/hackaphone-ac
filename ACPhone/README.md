@@ -1,6 +1,9 @@
-# AC Phone v0.6.1
+# AC Phone v0.6.2
 
 An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everything is custom-drawn: no stock AC or ImGui boxes.
+
+## New in v0.6.2
+- **Album art wallpaper:** Personalize › Wallpaper › Music makes the cover of the current song your wallpaper. It cross-fades when the track changes, and you can blur it or keep it sharp.
 
 ## New in v0.6.1
 - Music controls fixed: play/pause, next and previous now use CSP's built-in media controls, so they work with Spotify, YouTube, Apple Music and other Windows players.
