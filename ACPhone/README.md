@@ -1,6 +1,9 @@
-# HackaPhone v1.1
+# HackaPhone v1.1.2
 
 An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everything is custom-drawn: no stock AC or ImGui boxes.
+
+## New in v1.1.2
+- **Crashing banks your points:** a crash ends the run but every point is banked, counted on the leaderboards, your PB and your cash. Ghost Shield now soaks up one crash and keeps your run going.
 
 ## New in v1.1
 - **Race mode:** challenge any friend with HackaPhone to a race from the Race app or their profile. Pick 1/8, 1/4, 1/2 or 1 mile, 1 km, a custom distance, or a speed pull (0-100, 0-200, 0-300, 100-200, 60-130, full pull or your own). They get a notification and a message, and can accept or decline. Add a cash wager and the winner takes the pot.

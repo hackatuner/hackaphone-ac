@@ -1,12 +1,12 @@
 {
-  "version": "1.1.1",
-  "build": 14,
-  "notes": "Renamed to HackaPhone",
+  "version": "1.1.2",
+  "build": 15,
+  "notes": "1.1.2: crashes now bank every point (Cut-Up totals, best, PB, podium and cash all update after every run). Ghost Shield absorbs one crash.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 391284
+      "size": 391617
     },
     {
       "path": "manifest.ini",
@@ -16,7 +16,7 @@
     {
       "path": "README.md",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/README.md",
-      "size": 11052
+      "size": 11268
     },
     {
       "path": "icon.png",

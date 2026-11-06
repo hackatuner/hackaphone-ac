@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.1.1'
-local BUILD = 14
+local VERSION = '1.1.2'
+local BUILD = 15
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -1347,7 +1347,7 @@ local PW = {
   { id = 'x5',    name = 'Inferno',      tag = '5x', kind = 'mult', val = 5,  price = 6500,  rarity = 3, icon = '@BURN',   desc = 'Five times the points. Big PBs live here.' },
   { id = 'x7',    name = 'Supernova',    tag = '7x', kind = 'mult', val = 7,  price = 16000, rarity = 3, icon = '@BURN',   desc = 'Seven times the points for one run.' },
   { id = 'x10',   name = 'Singularity',  tag = '10x', kind = 'mult', val = 10, price = 45000, rarity = 4, icon = '@BURN',  desc = 'Ten times the points. One run to bend the leaderboard.' },
-  { id = 'shield', name = 'Ghost Shield', tag = 'SAVE', kind = 'fx', price = 1500,  rarity = 2, icon = '@PADLOCK', desc = 'Survive one crash: the run banks at 60% instead of vanishing.' },
+  { id = 'shield', name = 'Ghost Shield', tag = 'SAVE', kind = 'fx', price = 1500,  rarity = 2, icon = '@PADLOCK', desc = 'Soaks up one crash so your run keeps going.' },
   { id = 'magnet', name = 'Traffic Magnet', tag = '+60%', kind = 'fx', price = 1200, rarity = 2, icon = '@TARGET', desc = 'Near misses, close calls, oncoming and lane splits pay 60% more.' },
   { id = 'hyper',  name = 'Hyper Combo', tag = '+4s', kind = 'fx', price = 1000, rarity = 1, icon = '@STOPWATCH', desc = 'Your combo timer lasts 4 seconds longer.' },
   { id = 'warp',   name = 'Time Warp',   tag = 'SLOW', kind = 'fx', price = 2200, rarity = 3, icon = '@HOURGLASS', desc = 'Your combo timer drains at less than half speed.' },
@@ -1523,7 +1523,7 @@ end
 -- ---------------------------------------------------------------- run payouts + log
 function XM.payoutFor(score, crashed, fx)
   local base
-  if crashed then base = 25 + score * 0.012 else base = 60 + score * 0.04 end
+  base = 60 + score * 0.04   -- crash or bank, a run pays the same
   local mult = 1 + 0.1 * XM.perkLevel('pay')
   if fx and fx.cow then mult = mult * 3 end
   return math.floor(base * mult)
@@ -1771,8 +1771,8 @@ end
 -- Cut-Up hooks (called from 2d_hesi.lua)
 function XM.onRunEnd(summary, crashed, fx)
   local pay = XM.payoutFor(summary.score, crashed, fx)
-  if (not crashed) and summary.pb and fx and fx.hunter then pay = math.floor(pay * 1.25) end
-  XM.add(pay, crashed and 'Crash relief' or (summary.pb and 'Run banked · new PB' or 'Run banked'))
+  if summary.pb and fx and fx.hunter then pay = math.floor(pay * 1.25) end
+  XM.add(pay, crashed and 'Run banked (crashed)' or (summary.pb and 'Run banked · new PB' or 'Run banked'))
   summary.pay = pay
   local car = ac.getCarName(0) or '?'
   XM.recordRun({
@@ -3011,11 +3011,6 @@ local function endRun(crashed)
   if not HESI.running then return end
   local fx = HESI.pw or {}
   local saved = false
-  if crashed and fx.shield then
-    fx.shield, crashed, saved = false, false, true
-    HESI.run = HESI.run * 0.6
-    pushFeed('GHOST SHIELD  saved 60%', rgbm(0.75, 0.5, 1, 1), true)
-  end
   if (not crashed) and fx.hunter and HESI.run > S.hesiPB then
     HESI.run = HESI.run * 1.25
     pushFeed('PB HUNTER  +25%', rgbm(1, 0.8, 0.25, 1), true)
@@ -3025,33 +3020,33 @@ local function endRun(crashed)
   local st = HESI.stats or {}
   HESI.lastRun = { score = score, crashed = crashed, time = HESI.runTime, top = st.top or 0, maxMult = st.maxMult or 1,
     near = (st.near or 0), close = (st.close or 0), split = (st.split or 0), oncoming = (st.oncoming or 0),
-    overtake = (st.overtake or 0), pb = (not crashed) and score > S.hesiPB, at = os.date('%H:%M'),
+    overtake = (st.overtake or 0), pb = score > S.hesiPB, at = os.date('%H:%M'),
     avg = (HESI.runTime > 1) and ((st.dist or 0) / HESI.runTime * 3.6) or 0, saved = saved, boost = fx.mult or 1, fxNames = fx.names }
-  local payout = XM.onRunEnd(HESI.lastRun, crashed, fx)
-  pushFeed('CASH  +$' .. fmtPts(payout), rgbm(0.5, 1, 0.6, 1))
+  local okPay, payout = pcall(XM.onRunEnd, HESI.lastRun, crashed, fx)   -- money must never block scoring
+  if okPay then pushFeed('CASH  +$' .. fmtPts(payout), rgbm(0.5, 1, 0.6, 1)) else ac.log('HackaPhone payout error: ' .. tostring(payout)) end
   S.hesiRuns = S.hesiRuns + 1
   S.hesiNear = S.hesiNear + HESI.near
   HESI.near = 0
   HESI.seq = (HESI.seq + 1) % 30000
+  -- every run banks, crash or not: the points are yours either way
   if crashed then
     HESI.crashes = HESI.crashes + 1
     HESI.crashFlash = 1
     HESI.crashLost = score
-    pushFeed('CRASHED  -' .. fmtPts(score), T.red, true)
-    if score > 2000 then notify('Run lost 💥', fmtPts(score) .. ' points gone. Bank before you crash!', '🔥', nil, { quietWhenClosed = true }) end
+    pushFeed('CRASHED  BANKED +' .. fmtPts(score), T.red, true)
   else
     HESI.bankFlash = 1
     HESI.lastBank = score
-    HESI.sessionTotal = HESI.sessionTotal + score
-    S.hesiTotal = S.hesiTotal + score
-    if score > HESI.sessionBest then HESI.sessionBest = score end
     pushFeed('BANKED  +' .. fmtPts(score), rgbm(0.3, 1, 0.5, 1), true)
-    if score > S.hesiPB then
-      S.hesiPB = score
-      notify('New personal best! 🏆', fmtPts(score) .. ' points', '🔥', nil, { force = true })
-    elseif score > 5000 then
-      notify('Run banked', fmtPts(score) .. ' points', '🔥', nil, { quietWhenClosed = true })
-    end
+  end
+  HESI.sessionTotal = HESI.sessionTotal + score
+  S.hesiTotal = S.hesiTotal + score
+  if score > HESI.sessionBest then HESI.sessionBest = score end
+  if score > S.hesiPB then
+    S.hesiPB = score
+    notify('New personal best! 🏆', fmtPts(score) .. ' points', '🔥', nil, { force = true })
+  elseif score > 5000 then
+    notify(crashed and 'Crashed, but banked' or 'Run banked', fmtPts(score) .. ' points', '🔥', nil, { quietWhenClosed = true })
   end
   HESI.run, HESI.mult, HESI.combo = 0, 1, 0
   HESI.pw, HESI.bankTime, HESI.comboMax = {}, 3, 7
@@ -3075,7 +3070,7 @@ hesiSend = ac.OnlineEvent({
   if d.evt ~= 0 and (not prev or prev.evSeq ~= d.seq) then
     ev = { kind = d.evt, score = d.last, at = clock() }
     if d.evt == 1 then
-      if d.last >= 500 then pushFeed(name:upper() .. ' CRASHED  -' .. fmtPts(d.last), T.red, false) end
+      if d.last >= 500 then pushFeed(name:upper() .. ' CRASHED  +' .. fmtPts(d.last), T.red, false) end
     elseif d.last >= 2000 then
       pushFeed(name:upper() .. ' BANKED  +' .. fmtPts(d.last), rgbm(0.35, 1, 0.55, 1), false)
     end
@@ -3179,11 +3174,20 @@ local function hesiUpdate(dt)
 end
 HESI.update = hesiUpdate
 
-if ac.onCarCollision then
-  ac.onCarCollision(0, function()
-    if HESI.running and HESI.runTime > 1 then endRun(true) end
-  end)
+-- a crash ends the run (points are banked), unless Ghost Shield soaks it up
+HESI.collide = function()
+  if not (HESI.running and HESI.runTime > 1) then return end
+  if HESI.pw.shield and clock() - (HESI.shieldAt or -9) > 1 then
+    HESI.pw.shield = false
+    HESI.shieldAt = clock()
+    HESI.pulse = 1
+    pushFeed('GHOST SHIELD  blocked the crash', rgbm(0.75, 0.5, 1, 1), true)
+    return
+  end
+  if clock() - (HESI.shieldAt or -9) <= 1 then return end   -- same impact as the one the shield took
+  endRun(true)
 end
+if ac.onCarCollision then ac.onCarCollision(0, function() HESI.collide() end) end
 end
 -- ===========================================================================
 -- Vault: an in-game music player for your own tracks (unreleased music, downloads from
@@ -5978,7 +5982,7 @@ local function evTag(r)
   local e = r.ev
   if e and clock() - e.at < 25 then
     local age = clock() - e.at
-    if e.kind == 1 then return 'Crashed  -' .. HESI.fmt(e.score), T.red, 1, age end
+    if e.kind == 1 then return 'Crashed  +' .. HESI.fmt(e.score), T.red, 1, age end
     return 'Banked  +' .. HESI.fmt(e.score), rgbm(0.35, 1, 0.55, 1), 2, age
   end
 end
@@ -6113,8 +6117,8 @@ function APPMOD.CutUp.root()
       text('Go over ' .. HESI.startSpeed .. ' km/h to start', 13, 92, y + 56, T.label2)
       local lr = HESI.lastRun
       if lr then
-        text(lr.crashed and 'LAST RUN CRASHED' or 'LAST RUN BANKED', 10, 34, y + 100, lr.crashed and T.red or rgbm(0.4, 1, 0.55, 1), F.b)
-        text((lr.crashed and '-' or '+') .. HESI.fmt(lr.score), 30, 34, y + 116, lr.crashed and T.red or rgbm(0.4, 1, 0.55, 1), F.numb)
+        text(lr.crashed and 'CRASHED · BANKED ANYWAY' or 'LAST RUN BANKED', 10, 34, y + 100, lr.crashed and T.red or rgbm(0.4, 1, 0.55, 1), F.b)
+        text('+' .. HESI.fmt(lr.score), 30, 34, y + 116, lr.crashed and T.red or rgbm(0.4, 1, 0.55, 1), F.numb)
       end
       textBox('Near misses, close calls, lane splits and oncoming passes stack your multiplier.', 12, 34, y + 156, SW - 34, y + 184, T.label2)
     end
@@ -6123,7 +6127,7 @@ function APPMOD.CutUp.root()
     if lr and not HESI.running then
       rect(16, y, SW - 16, y + 132, T.cell, 18)
       if S.thick then rectLine(16, y, SW - 16, y + 132, T.border, 18, 1.5) end
-      text(lr.crashed and '@COLLISION LAST RUN · CRASHED' or (lr.pb and '@TROPHY LAST RUN · NEW PB' or '@CONFIRM LAST RUN · BANKED'), 11, 32, y + 14,
+      text(lr.crashed and '@COLLISION LAST RUN · CRASHED, BANKED' or (lr.pb and '@TROPHY LAST RUN · NEW PB' or '@CONFIRM LAST RUN · BANKED'), 11, 32, y + 14,
         lr.crashed and T.red or (lr.pb and T.yellow or T.green), F.b)
       text(HESI.fmt(lr.score), 30, 32, y + 32, T.white, F.numb)
       text(lr.at, 12, SW - 32, y + 16, T.label2, F.num, 1)
@@ -6876,12 +6880,12 @@ local function runDetail(r)
     bgFill()
     local s = scrollBegin('rundetail', 94, BOTTOM)
     local y = 104
-    local col = r.crashed and T.red or MONEY_GREEN
+    local col = r.crashed and rgbm(1, 0.62, 0.25, 1) or MONEY_GREEN
     rect(16, y, SW - 16, y + 120, mix(T.cell, col, 0.14), 20)
     rectLine(16, y, SW - 16, y + 120, A(col, 0.6), 20, 2)
-    text(r.crashed and 'CRASHED' or (r.pb and 'NEW PERSONAL BEST' or 'BANKED'), 11, 34, y + 14, col, F.b)
+    text(r.crashed and (r.pb and 'CRASHED · NEW PERSONAL BEST' or 'CRASHED · BANKED') or (r.pb and 'NEW PERSONAL BEST' or 'BANKED'), 11, 34, y + 14, col, F.b)
     text(HESI.fmt(r.score), 44, 34, y + 32, T.white, F.numb)
-    text((r.crashed and '' or '+') .. money(r.pay or 0), 14, SW - 34, y + 18, MONEY_GREEN, F.numb, 1)
+    text('+' .. money(r.pay or 0), 14, SW - 34, y + 18, MONEY_GREEN, F.numb, 1)
     if (r.boost or 1) > 1 then text('x' .. r.boost .. ' boost', 12, SW - 34, y + 40, rgbm(0.8, 0.5, 1, 1), F.b, 1) end
     y = y + 134
     W.groupBg(y, 4)
@@ -6915,7 +6919,7 @@ function APPMOD.Runs.root()
     local runs = XM.jget('runLog', {})
     local best, top, pays = 0, 0, 0
     for _, r in ipairs(runs) do
-      if not r.crashed and r.score > best then best = r.score end
+      if r.score > best then best = r.score end
       if r.top > top then top = r.top end
       pays = pays + (r.pay or 0)
     end
@@ -6938,12 +6942,12 @@ function APPMOD.Runs.root()
         if visible(s, yy, 62) then
           local fired, pressed = tap('run' .. i, LIST.x, yy, LIST.x + LIST.w, yy + 62)
           if pressed then rect(LIST.x, yy, LIST.x + LIST.w, yy + 62, rgbm(1, 1, 1, 0.06), 14) end
-          local col = r.crashed and T.red or MONEY_GREEN
+          local col = r.crashed and rgbm(1, 0.62, 0.25, 1) or MONEY_GREEN
           rect(LIST.x + 10, yy + 14, LIST.x + 14, yy + 48, col, 2)
           textFit(r.car, 15, LIST.x + 26, yy + 9, LIST.w - 150, T.label, F.sb)
           textFit(string.format('%d km/h top · %s%s', r.top, ago(r.t), (r.boost or 1) > 1 and ('  ·  x' .. r.boost) or ''), 12, LIST.x + 26, yy + 33, LIST.w - 150, T.label2)
-          text(HESI.fmt(r.score), 17, LIST.x + LIST.w - 14, yy + 11, r.crashed and T.label2 or T.white, F.numb, 1)
-          text((r.crashed and 'crashed' or (r.pb and 'new PB' or 'banked')), 11, LIST.x + LIST.w - 14, yy + 35, col, F.b, 1)
+          text(HESI.fmt(r.score), 17, LIST.x + LIST.w - 14, yy + 11, T.white, F.numb, 1)
+          text((r.crashed and 'crashed · banked' or (r.pb and 'new PB' or 'banked')), 11, LIST.x + LIST.w - 14, yy + 35, col, F.b, 1)
           if i < #runs then line(LIST.x + 26, yy + 62, LIST.x + LIST.w, yy + 62, T.sep, 1) end
           if fired then navPush(runDetail(r)) end
         end
@@ -6956,7 +6960,8 @@ function APPMOD.Runs.root()
         local c = cars[r.car]
         if not c then c = { car = r.car, n = 0, crashes = 0, best = 0, top = 0, last = r.t, pay = 0 } cars[r.car] = c order[#order + 1] = c end
         c.n = c.n + 1
-        if r.crashed then c.crashes = c.crashes + 1 elseif r.score > c.best then c.best = r.score end
+        if r.crashed then c.crashes = c.crashes + 1 end
+        if r.score > c.best then c.best = r.score end
         c.top = math.max(c.top, r.top)
         c.last = math.max(c.last, r.t)
         c.pay = c.pay + (r.pay or 0)
@@ -8714,7 +8719,7 @@ function script.actionBarDraw(dt)
     rect(cx - 150 + shake, 8, cx + 150 + shake, 70, T.red, 31)
     D.a = oldA * clamp(f * 1.6, 0, 1)
     text('CRASHED', 30, cx + shake, 12, T.white, F.numb, 0.5)
-    text('-' .. HESI.fmt(HESI.crashLost or 0) .. '   ' .. (HESI.lastRun and HESI.lastRun.pay and ('+' .. XM.money(HESI.lastRun.pay)) or ''), 15, cx + shake, 46, rgbm(1, 0.85, 0.85, 1), F.numb, 0.5)
+    text('BANKED +' .. HESI.fmt(HESI.crashLost or 0) .. '   ' .. (HESI.lastRun and HESI.lastRun.pay and ('+' .. XM.money(HESI.lastRun.pay)) or ''), 15, cx + shake, 46, rgbm(1, 0.85, 0.85, 1), F.numb, 0.5)
     D.a = oldA
   elseif HESI.bankFlash > 0 then
     local f = HESI.bankFlash
