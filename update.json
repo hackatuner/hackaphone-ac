@@ -1,12 +1,12 @@
 {
-  "version": "0.8",
-  "build": 10,
-  "notes": "4K liveries rendered on your GPU. Real woodland camo plus Urban, Digital and Tiger camo, Hex, realistic twill and forged carbon, metallic flake and pearl shift.",
+  "version": "0.9",
+  "build": 11,
+  "notes": "Cut-Up redesign: tier glow, count-up scores, live crash/bank boards with sliding podium",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 263953
+      "size": 271074
     },
     {
       "path": "manifest.ini",
@@ -16,7 +16,7 @@
     {
       "path": "README.md",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/README.md",
-      "size": 7848
+      "size": 8303
     },
     {
       "path": "icon.png",

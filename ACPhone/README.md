@@ -1,6 +1,10 @@
-# AC Phone v0.8
+# AC Phone v0.9
 
 An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everything is custom-drawn: no stock AC or ImGui boxes.
+
+## New in v0.9
+- **Cut-Up redesign:** the action bar and the Cut-Up app glow in the colour of your current tier, scores count up, and there is a tier ladder and a live event feed. Crashes shake and flash red; banks flash green.
+- **Live boards:** when anyone crashes or banks, everyone's Cut-Up scores and podium update right away. The podium columns slide into their new places, and crash/bank tags show on each driver. Also in Leaderboards › Cut-Up.
 
 ## New in v0.8
 - **4K liveries:** paint is now rendered on your graphics card into a 4096×4096 texture with MIP maps, so it's sharp up close and clean at a distance. Edges are anti-aliased.

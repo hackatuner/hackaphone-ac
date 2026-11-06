@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '0.8'
-local BUILD = 10
+local VERSION = '0.9'
+local BUILD = 11
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -1915,7 +1915,7 @@ local HESI = {
   running = false, run = 0, mult = 1, combo = 0, comboMax = 7, slowT = 0, events = {}, feed = {},
   cars = {}, lastPassSide = 0, lastPassAt = -10, near = 0, best = 0, sessionBest = 0, sessionTotal = 0,
   board = {}, sendAt = 0, stats = { maxMult = 1, top = 0 }, lastRun = nil, heat = 0, crashFlash = 0, bankFlash = 0, lastBank = 0, runTime = 0,
-  startSpeed = 70, endSpeed = 30,
+  startSpeed = 70, endSpeed = 30, pulse = 0, seq = 0, anim = nil, crashes = 0,
 }
 local HESI_EVENTS = {
   overtake  = { name = 'OVERTAKE',   pts = 120, mult = 0.10, color = rgbm(1, 1, 1, 1) },
@@ -1954,6 +1954,26 @@ local function tierFor(m)
   return t
 end
 HESI.tier = function() return tierFor(HESI.mult).name end
+local TIER_COL = { rgbm(0.55, 0.85, 1, 1), rgbm(1, 0.8, 0.25, 1), rgbm(1, 0.5, 0.15, 1), rgbm(1, 0.25, 0.3, 1), rgbm(0.8, 0.35, 1, 1) }
+HESI.tierIndex = function(m)
+  local idx = 1
+  for i, x in ipairs(TIERS) do if (m or HESI.mult) >= x.at then idx = i end end
+  return idx
+end
+HESI.tierColor = function(m) return TIER_COL[HESI.tierIndex(m)] end
+HESI.tierCount = #TIERS
+-- smooth value animation, keyed (used for count-ups and leaderboard reshuffles)
+local ANIMS = {}
+HESI.anim = function(key, target, rate)
+  local now = clock()
+  local a = ANIMS[key]
+  if not a then ANIMS[key] = { v = target, t = now } return target end
+  local dt = clamp(now - a.t, 0, 0.1)
+  a.t = now
+  a.v = a.v + (target - a.v) * (1 - math.exp(-dt * (rate or 12)))
+  if math.abs(target - a.v) < 0.5 then a.v = target end
+  return a.v
+end
 
 local function addEvent(kind, extra)
   local e = HESI_EVENTS[kind]
@@ -1966,6 +1986,7 @@ local function addEvent(kind, extra)
   HESI.mult = math.min(MAX_MULT, HESI.mult + e.mult)
   HESI.combo = HESI.comboMax
   HESI.heat = math.min(1, HESI.heat + 0.25)
+  HESI.pulse = 1
   if kind ~= 'overtake' then HESI.near = HESI.near + 1 end
   local st = HESI.stats
   st[kind] = (st[kind] or 0) + 1
@@ -1984,12 +2005,18 @@ local function startRun()
 end
 
 local hesiSend
-local function broadcast()
+local function broadcast(evt, last)
   if not hesiSend then return end
-  pcall(hesiSend, {
+  local data = {
     run = math.floor(HESI.run), best = math.floor(HESI.sessionBest), total = math.floor(HESI.sessionTotal),
     pb = math.floor(S.hesiPB), mult = math.floor(HESI.mult * 10), state = HESI.running and 1 or 0,
-  }, true)
+    evt = evt or 0, last = math.floor(last or 0), crashes = HESI.crashes, seq = HESI.seq,
+  }
+  pcall(hesiSend, data, true)
+  if evt and evt ~= 0 then
+    -- crash/bank results are what the boards reshuffle on, so send them twice in case one is dropped
+    setTimeout(function() pcall(hesiSend, data, true) end, 0.7)
+  end
 end
 
 local function endRun(crashed)
@@ -2003,8 +2030,11 @@ local function endRun(crashed)
   S.hesiRuns = S.hesiRuns + 1
   S.hesiNear = S.hesiNear + HESI.near
   HESI.near = 0
+  HESI.seq = (HESI.seq + 1) % 30000
   if crashed then
+    HESI.crashes = HESI.crashes + 1
     HESI.crashFlash = 1
+    HESI.crashLost = score
     pushFeed('CRASHED  -' .. fmtPts(score), T.red, true)
     if score > 2000 then notify('Run lost 💥', fmtPts(score) .. ' points gone. Bank before you crash!', '🔥', nil, { quietWhenClosed = true }) end
   else
@@ -2022,7 +2052,8 @@ local function endRun(crashed)
     end
   end
   HESI.run, HESI.mult, HESI.combo = 0, 1, 0
-  broadcast()
+  HESI.lastEvt = { kind = crashed and 1 or 2, score = score, at = clock() }
+  broadcast(crashed and 1 or 2, score)
 end
 HESI.endRun = endRun
 
@@ -2031,12 +2062,23 @@ hesiSend = ac.OnlineEvent({
   ac.StructItem.key('acphone.cutup.v1'),
   run = ac.StructItem.int32(), best = ac.StructItem.int32(), total = ac.StructItem.int32(),
   pb = ac.StructItem.int32(), mult = ac.StructItem.int16(), state = ac.StructItem.byte(),
+  evt = ac.StructItem.byte(), last = ac.StructItem.int32(), crashes = ac.StructItem.int16(), seq = ac.StructItem.int16(),
 }, function(sender, d)
   if not sender or sender.index == 0 then return end
   local name = ac.getDriverName(sender.index) or '?'
   local prev = HESI.board[sender.sessionID]
+  local ev = prev and prev.ev or nil
+  -- a crash or bank result: show it right away and keep it on their row for a bit
+  if d.evt ~= 0 and (not prev or prev.evSeq ~= d.seq) then
+    ev = { kind = d.evt, score = d.last, at = clock() }
+    if d.evt == 1 then
+      if d.last >= 500 then pushFeed(name:upper() .. ' CRASHED  -' .. fmtPts(d.last), T.red, false) end
+    elseif d.last >= 2000 then
+      pushFeed(name:upper() .. ' BANKED  +' .. fmtPts(d.last), rgbm(0.35, 1, 0.55, 1), false)
+    end
+  end
   HESI.board[sender.sessionID] = { name = name, run = d.run, best = d.best, total = d.total, pb = d.pb, mult = d.mult / 10,
-    running = d.state == 1, at = clock(), index = sender.index }
+    running = d.state == 1, at = clock(), index = sender.index, ev = ev, evSeq = (d.evt ~= 0) and d.seq or (prev and prev.evSeq), crashes = d.crashes }
   -- crew all-time board (kept on this PC)
   local ok, crew = pcall(JSON.parse, S.hesiCrew)
   crew = (ok and type(crew) == 'table') and crew or {}
@@ -2054,6 +2096,7 @@ local function hesiUpdate(dt)
   HESI.heat = math.max(0, HESI.heat - dt * 0.15)
   for _, f in ipairs(HESI.feed) do f.t = f.t + dt end
   for i = #HESI.feed, 1, -1 do if HESI.feed[i].t > 3 then table.remove(HESI.feed, i) end end
+  HESI.pulse = math.max(0, HESI.pulse - dt * 3)
   HESI.crashFlash = math.max(0, HESI.crashFlash - dt * 1.2)
   HESI.bankFlash = math.max(0, HESI.bankFlash - dt * 1.2)
 
@@ -4676,15 +4719,106 @@ local function boardRows(kind)
     crew[myName] = math.max(crew[myName] or 0, S.hesiPB)
     for name, pb in pairs(crew) do rows[#rows + 1] = { name = name, score = pb, me = name == myName } end
   else
-    rows[#rows + 1] = { name = myName, me = true, score = kind == 1 and HESI.run or HESI.sessionBest, running = HESI.running, mult = HESI.mult, total = HESI.sessionTotal }
+    rows[#rows + 1] = { name = myName, me = true, score = kind == 1 and HESI.run or HESI.sessionBest, running = HESI.running, mult = HESI.mult, total = HESI.sessionTotal, ev = HESI.lastEvt, crashes = HESI.crashes }
     for _, b in pairs(HESI.board) do
       if clock() - b.at < 120 then
-        rows[#rows + 1] = { name = b.name, score = kind == 1 and b.run or b.best, running = b.running, mult = b.mult, total = b.total }
+        rows[#rows + 1] = { name = b.name, score = kind == 1 and b.run or b.best, running = b.running, mult = b.mult, total = b.total, ev = b.ev, crashes = b.crashes }
       end
     end
   end
-  table.sort(rows, function(a, b) return a.score > b.score end)
+  table.sort(rows, function(a, b) if a.score ~= b.score then return a.score > b.score end return a.name < b.name end)
   return rows
+end
+
+
+HESI.ui = {}
+local MEDAL = { rgbm(1, 0.82, 0.25, 1), rgbm(0.80, 0.82, 0.86, 1), rgbm(0.85, 0.55, 0.30, 1) }
+local function evTag(r)
+  local e = r.ev
+  if e and clock() - e.at < 25 then
+    local age = clock() - e.at
+    if e.kind == 1 then return 'Crashed  -' .. HESI.fmt(e.score), T.red, 1, age end
+    return 'Banked  +' .. HESI.fmt(e.score), rgbm(0.35, 1, 0.55, 1), 2, age
+  end
+end
+local function subFor(r, kind)
+  local tag, tc = evTag(r)
+  if tag then return tag, tc end
+  if kind == 1 then
+    if r.running then return string.format('Running  x%.1f', r.mult or 1), HESI.tierColor(r.mult) end
+    return 'Idle', T.label2
+  elseif kind == 2 then return 'Banked ' .. HESI.fmt(r.total or 0), T.label2 end
+  return 'Personal best', T.label2
+end
+
+-- top three on a podium; columns slide to their new places when the order changes
+function HESI.ui.podium(rows, y, kind)
+  if #rows < 1 then
+    text('Nobody has a score yet. Go cut some traffic.', 13, SW / 2, y + 40, T.label2, F.r, 0.5)
+    return y + 90
+  end
+  local pw = (SW - 32 - 16) / 3
+  local heights = { 100, 78, 62 }
+  local slotOf = { 2, 1, 3 }
+  local base = y + 172
+  for rank = 1, math.min(3, #rows) do
+    local r = rows[rank]
+    local key = 'pod' .. kind .. r.name
+    local x = HESI.anim(key .. 'x', 16 + (slotOf[rank] - 1) * (pw + 8), 9)
+    local h = HESI.anim(key .. 'h', heights[rank], 9)
+    local col = MEDAL[rank]
+    local tag, tcol, tk, age = evTag(r)
+    if tk == 1 and age < 0.7 then x = x + math.sin(age * 55) * 5 * (1 - age / 0.7) end
+    local colTop = base - h
+    local cx = x + pw / 2
+    local sc = HESI.anim(key .. 's', r.score, 7)
+    local glow = r.running and (0.5 + 0.5 * math.sin(clock() * 5)) or 0
+    -- column
+    rect(x, colTop, x + pw, base, mix(T.cell, col, 0.2 + 0.12 * glow), 12, ui.CornerFlags.Top)
+    rect(x, colTop, x + pw, colTop + 3, col, 2)
+    if tk then
+      local f = clamp(1 - age / 6, 0, 1)
+      rect(x, colTop, x + pw, base, A(tcol, 0.22 * f), 12, ui.CornerFlags.Top)
+    end
+    text(tostring(rank), 24, cx, colTop + 8, col, F.numb, 0.5)
+    textFit(HESI.fmt(sc), h > 70 and 15 or 13, cx, colTop + 38, pw - 8, T.white, F.numb, 0.5)
+    -- avatar + name above the column
+    avatar(r.name, cx - 22, colTop - 58, 44)
+    if r.running then rectLine(cx - 25, colTop - 61, cx + 25, colTop - 11, A(HESI.tierColor(r.mult), 0.6 + 0.4 * glow), 25, 2) end
+    if r.me then rectLine(cx - 25, colTop - 61, cx + 25, colTop - 11, A(accent(), 0.9), 25, 2) end
+    textFit(r.name, 12, cx, colTop - 8, pw - 6, T.label, F.sb, 0.5)
+    -- crash / bank / running tag under the column
+    local label, lc = subFor(r, kind)
+    if tag or r.running then
+      rect(x + 2, base + 5, x + pw - 2, base + 23, A(lc, 0.16), 9)
+      textFit(label, 10, cx, base + 8, pw - 10, lc, F.b, 0.5)
+    end
+  end
+  return base + 32
+end
+
+-- ranks 4 and below, each row sliding smoothly when places change
+function HESI.ui.list(rows, y, kind, from)
+  local n = #rows - from + 1
+  if n < 1 then return y end
+  local h = 56
+  rect(LIST.x, y, LIST.x + LIST.w, y + n * h, T.cell, 14)
+  if S.thick then rectLine(LIST.x, y, LIST.x + LIST.w, y + n * h, T.border, 14, 1.5) end
+  for i = from, #rows do
+    local r = rows[i]
+    local yy = HESI.anim('row' .. kind .. r.name, y + (i - from) * h, 10)
+    local tag, tcol, tk, age = evTag(r)
+    if r.me then rect(LIST.x, yy, LIST.x + LIST.w, yy + h, A(accent(), 0.14), 14) end
+    if tk then rect(LIST.x, yy, LIST.x + LIST.w, yy + h, A(tcol, 0.16 * clamp(1 - age / 6, 0, 1)), 14) end
+    local dx = (tk == 1 and age < 0.7) and math.sin(age * 55) * 5 * (1 - age / 0.7) or 0
+    text(tostring(i), 16, LIST.x + 22 + dx, yy + 17, T.label2, F.numb, 0.5)
+    avatar(r.name, LIST.x + 42 + dx, yy + 10, 36)
+    textFit(r.name .. (r.me and '  (you)' or ''), 15, LIST.x + 88 + dx, yy + 9, LIST.w - 200, T.label, F.sb)
+    local sub, sc = subFor(r, kind)
+    textFit(sub, 12, LIST.x + 88 + dx, yy + 31, LIST.w - 200, sc)
+    text(HESI.fmt(HESI.anim('rs' .. kind .. r.name, r.score, 7)), 17, LIST.x + LIST.w - 14, yy + 17, T.white, F.numb, 1)
+  end
+  return y + n * h
 end
 
 function APPMOD.CutUp.root()
@@ -4694,28 +4828,56 @@ function APPMOD.CutUp.root()
     bgFill()
     local s = scrollBegin('cutup', 50, BOTTOM)
     local y = largeTitle('Cut-Up', 96, s.y)
-    -- hero card
+    -- hero card: glows in the colour of your current tier
     local ac1 = accent()
-    local hot = HESI.running and clamp(HESI.mult / 10, 0, 1) or 0
-    rect(16, y, SW - 16, y + 178, mix(T.cell, rgbm(1, 0.3, 0.1, 1), hot * 0.35), 22)
-    rectLine(16, y, SW - 16, y + 178, A(ac1, 0.5 + hot * 0.5), 22, 2)
-    if HESI.running then
-      text('@BURN RUN IN PROGRESS', 12, 34, y + 14, ac1, F.b)
-      text(HESI.fmt(HESI.run), 46, 34, y + 30, T.white, F.numb)
-      if HESI.tier() ~= '' then text(HESI.tier(), 12, 36, y + 86, rgbm(1, 0.8, 0.25, 1), F.b) end
-      text(string.format('x%.1f', HESI.mult), 30, SW - 34, y + 40, rgbm(1, 0.8, 0.2, 1), F.numb, 1)
-      rect(34, y + 104, SW - 34, y + 112, rgbm(1, 1, 1, 0.1), 4)
-      rect(34, y + 104, 34 + (SW - 68) * clamp(HESI.combo / HESI.comboMax, 0, 1), y + 112, ac1, 4)
-      text('Combo', 11, 34, y + 116, T.label2, F.m)
-      textBox('Slow under 30 km/h for 3 seconds to BANK. Crash and the run is gone.', 12, 34, y + 136, SW - 34, y + 172, T.label2)
+    local run = HESI.running
+    local tc = run and HESI.tierColor() or ac1
+    local beat = 0.5 + 0.5 * math.sin(clock() * 4)
+    local hot = run and clamp(HESI.mult / 10, 0, 1) or 0
+    local H = 190
+    rect(16, y, SW - 16, y + H, mix(T.cell, tc, run and (0.14 + 0.12 * HESI.pulse + 0.06 * beat * hot) or 0.06), 22)
+    if HESI.crashFlash > 0 then rect(16, y, SW - 16, y + H, A(T.red, 0.35 * HESI.crashFlash), 22) end
+    if HESI.bankFlash > 0 then rect(16, y, SW - 16, y + H, A(rgbm(0.3, 1, 0.5, 1), 0.3 * HESI.bankFlash), 22) end
+    rectLine(16, y, SW - 16, y + H, A(tc, 0.45 + 0.4 * hot * beat + 0.3 * HESI.pulse), 22, 2)
+    if run then
+      text('@BURN LIVE RUN', 11, 34, y + 16, tc, F.b)
+      local tier = HESI.tier()
+      text(tier ~= '' and tier or 'CRUISING', 11, SW - 34, y + 16, tc, F.b, 1)
+      local shown = HESI.anim('cu.score', HESI.run, 14)
+      text(HESI.fmt(shown), 50 + math.floor(HESI.pulse * 4), 32, y + 34, T.white, F.numb)
+      text(string.format('x%.1f', HESI.mult), 34, SW - 34, y + 52, tc, F.numb, 1)
+      -- tier ladder
+      local ladder = { 1, 3, 6, 10, 15 }
+      local lw = (SW - 68 - 4 * 5) / 5
+      for i, at in ipairs(ladder) do
+        local x = 34 + (i - 1) * (lw + 5)
+        local on = HESI.mult >= at
+        rect(x, y + 104, x + lw, y + 110, on and HESI.tierColor(at) or rgbm(1, 1, 1, 0.1), 3)
+      end
+      -- combo timer
+      local cf = clamp(HESI.combo / HESI.comboMax, 0, 1)
+      rect(34, y + 118, SW - 34, y + 122, rgbm(1, 1, 1, 0.1), 2)
+      rect(34, y + 118, 34 + (SW - 68) * cf, y + 122, cf < 0.25 and T.red or tc, 2)
+      -- last events
+      for i = 1, 2 do
+        local f = HESI.feed[i]
+        if f then
+          local fa = clamp(1 - (f.t - 3) / 1.5, 0.25, 1)
+          text(f.text, 13, 34, y + 130 + (i - 1) * 21, A(f.color, fa), F.numb)
+        end
+      end
     else
       glyph('BURN', 32, y + 24, 44, ac1)
       text('Ready to run', 22, 92, y + 26, T.white, F.b)
       text('Go over ' .. HESI.startSpeed .. ' km/h to start', 13, 92, y + 56, T.label2)
-      if HESI.lastBank > 0 then text('Last banked  ' .. HESI.fmt(HESI.lastBank), 14, 34, y + 104, rgbm(0.4, 1, 0.55, 1), F.sb) end
-      textBox('Weave through traffic. Near misses, close calls, lane splits and oncoming passes stack your multiplier.', 12, 34, y + 128, SW - 34, y + 172, T.label2)
+      local lr = HESI.lastRun
+      if lr then
+        text(lr.crashed and 'LAST RUN CRASHED' or 'LAST RUN BANKED', 10, 34, y + 100, lr.crashed and T.red or rgbm(0.4, 1, 0.55, 1), F.b)
+        text((lr.crashed and '-' or '+') .. HESI.fmt(lr.score), 30, 34, y + 116, lr.crashed and T.red or rgbm(0.4, 1, 0.55, 1), F.numb)
+      end
+      textBox('Near misses, close calls, lane splits and oncoming passes stack your multiplier.', 12, 34, y + 156, SW - 34, y + 184, T.label2)
     end
-    y = y + 192
+    y = y + 204
     local lr = HESI.lastRun
     if lr and not HESI.running then
       rect(16, y, SW - 16, y + 132, T.cell, 18)
@@ -4753,21 +4915,8 @@ function APPMOD.CutUp.root()
     tab = W.segmented('cu.tab', { 'Live', 'Session', 'All-time' }, tab, 16, y, SW - 32)
     y = y + 46
     local rows = boardRows(tab)
-    rect(LIST.x, y, LIST.x + LIST.w, y + math.max(1, #rows) * 54, T.cell, 14)
-    if S.thick then rectLine(LIST.x, y, LIST.x + LIST.w, y + math.max(1, #rows) * 54, T.border, 14, 1.5) end
-    for i, r in ipairs(rows) do
-      local yy = y + (i - 1) * 54
-      if r.me then rect(LIST.x, yy, LIST.x + LIST.w, yy + 54, A(ac1, 0.14), 14) end
-      local medal = i == 1 and '🥇' or (i == 2 and '🥈' or (i == 3 and '🥉' or tostring(i)))
-      text(medal, i <= 3 and 20 or 15, LIST.x + 24, yy + (i <= 3 and 13 or 16), T.label, F.b, 0.5)
-      avatar(r.name, LIST.x + 44, yy + 10, 34)
-      textFit(r.name .. (r.me and '  (you)' or ''), 15, LIST.x + 88, yy + 9, LIST.w - 200, T.label, F.sb)
-      local sub = tab == 1 and (r.running and string.format('🔥 running · x%.1f', r.mult or 1) or 'idle') or (tab == 2 and ('banked ' .. HESI.fmt(r.total or 0)) or 'personal best')
-      textFit(sub, 12, LIST.x + 88, yy + 30, LIST.w - 200, r.running and ac1 or T.label2)
-      text(HESI.fmt(r.score), 17, LIST.x + LIST.w - 14, yy + 16, T.white, F.numb, 1)
-      if i < #rows then line(LIST.x + 88, yy + 54, LIST.x + LIST.w, yy + 54, T.sep, 1) end
-    end
-    y = y + math.max(1, #rows) * 54 + 6
+    y = HESI.ui.podium(rows, y, tab)
+    y = HESI.ui.list(rows, y, tab, 4) + 6
     y = W.sectionFooter('Everyone with AC Phone shows here live. All-time bests are remembered on this PC.', y)
     -- settings
     W.groupBg(y + 6, 2)
@@ -4899,10 +5048,8 @@ function APPMOD.Leaders.root()
       LV_TAB = bt
       y = y + 48
       local cr = boardRows(bt)
-      rect(LIST.x, y, LIST.x + LIST.w, y + math.max(1, #cr) * 58, T.cell, 14)
-      for i, r in ipairs(cr) do
-        y = lbRow(r, i, y, HESI.fmt(r.score), bt == 1 and (r.running and string.format('Running · x%.1f', r.mult or 1) or 'Idle') or (bt == 2 and ('Banked ' .. HESI.fmt(r.total or 0)) or 'Personal best'))
-      end
+      y = HESI.ui.podium(cr, y, bt)
+      y = HESI.ui.list(cr, y, bt, 4)
     else
       for _, r in ipairs(rows) do if r.drift > 0 then list[#list + 1] = r end end
       table.sort(list, function(a, b) return a.drift > b.drift end)
@@ -6019,26 +6166,33 @@ function script.actionBarDraw(dt)
   local y0 = 100
   if HESI.running then
     local hot = clamp(HESI.mult / 12, 0, 1)
+    local tcol = HESI.tierColor()
+    local beat = 0.5 + 0.5 * math.sin(clock() * 6)
     local bw = minimal and 300 or 480
     local bh = minimal and 50 or 64
     local x1, x2 = cx - bw / 2, cx + bw / 2
+    -- tier glow: soft halo that gets stronger with the multiplier and flares on every event
+    for g = 3, 1, -1 do
+      local gi = (0.05 + 0.10 * hot + 0.14 * HESI.pulse + 0.04 * beat * hot) / g
+      rect(x1 - g * 4, y0 - g * 4, x2 + g * 4, y0 + bh + g * 4, A(tcol, gi), bh / 2 + g * 4)
+    end
     -- glass bar
-    rect(x1, y0, x2, y0 + bh, rgbm(0.03, 0.03, 0.04, 0.78), bh / 2)
+    rect(x1, y0, x2, y0 + bh, rgbm(0.03, 0.03, 0.04, 0.82), bh / 2)
     ui.drawRectFilledMultiColor(P(x1 + bh / 2, y0), P(x2 - bh / 2, y0 + 1.5), A(rgbm(1, 1, 1, 0)), A(rgbm(1, 1, 1, 0)), A(rgbm(1, 1, 1, 0.25)), A(rgbm(1, 1, 1, 0.25)))
-    rectLine(x1, y0, x2, y0 + bh, A(mix(ac1, gold, hot), 0.35 + hot * 0.5), bh / 2, 1.5)
+    rectLine(x1, y0, x2, y0 + bh, A(tcol, 0.4 + hot * 0.5 + HESI.pulse * 0.3), bh / 2, 1.5)
     -- combo timer underline
     local frac = clamp(HESI.combo / HESI.comboMax, 0, 1)
-    rect(x1 + bh / 2, y0 + bh - 3, x1 + bh / 2 + (bw - bh) * frac, y0 + bh - 1, mix(ac1, gold, hot), 1)
+    rect(x1 + bh / 2, y0 + bh - 3, x1 + bh / 2 + (bw - bh) * frac, y0 + bh - 1, frac < 0.25 and T.red or tcol, 1)
     if minimal then
-      text(HESI.fmt(HESI.run), 30, cx - 20, y0 + 7, T.white, F.numb, 0.5)
-      text(string.format('x%.1f', HESI.mult), 20, x2 - 22, y0 + 13, gold, F.numb, 1)
+      text(HESI.fmt(HESI.anim('bar.score', HESI.run, 16)), 30, cx - 20, y0 + 7, T.white, F.numb, 0.5)
+      text(string.format('x%.1f', HESI.mult), 20, x2 - 22, y0 + 13, tcol, F.numb, 1)
     else
       -- multiplier
-      text(string.format('x%.1f', HESI.mult), 26, x1 + 34, y0 + 14, gold, F.numb, 0)
+      text(string.format('x%.1f', HESI.mult), 26 + math.floor(HESI.pulse * 3), x1 + 34, y0 + 14, tcol, F.numb, 0)
       local tier = HESI.tier()
-      if tier ~= '' then text(tier, 9, x1 + 36, y0 + 46, rgbm(1, 0.8, 0.3, 0.85), F.b) end
+      if tier ~= '' then text(tier, 9, x1 + 36, y0 + 46, tcol, F.b) end
       -- score
-      text(HESI.fmt(HESI.run), 38, cx, y0 + 8, T.white, F.numb, 0.5)
+      text(HESI.fmt(HESI.anim('bar.score', HESI.run, 16)), 38 + math.floor(HESI.pulse * 3), cx, y0 + 8, T.white, F.numb, 0.5)
       -- PB progress
       if S.hesiPB > 0 then
         local pbt = clamp(HESI.run / S.hesiPB, 0, 1)
@@ -6062,12 +6216,24 @@ function script.actionBarDraw(dt)
     text(label, 12, cx, y0 + 31, rgbm(1, 1, 1, 0.85), F.numb, 0.5)
   end
   if HESI.crashFlash > 0 then
-    local oldA = D.a D.a = HESI.crashFlash
-    text('CRASHED', 30, cx, 22, T.red, F.numb, 0.5)
+    local f = HESI.crashFlash
+    local oldA = D.a
+    local shake = math.sin(f * 60) * 8 * f * f
+    D.a = oldA * f * 0.5
+    rect(cx - 150 + shake, 8, cx + 150 + shake, 70, T.red, 31)
+    D.a = oldA * clamp(f * 1.6, 0, 1)
+    text('CRASHED', 30, cx + shake, 12, T.white, F.numb, 0.5)
+    text('-' .. HESI.fmt(HESI.crashLost or 0), 15, cx + shake, 46, rgbm(1, 0.85, 0.85, 1), F.numb, 0.5)
     D.a = oldA
   elseif HESI.bankFlash > 0 then
-    local oldA = D.a D.a = HESI.bankFlash
-    text('BANKED +' .. HESI.fmt(HESI.lastBank), 28, cx, 22, rgbm(0.35, 1, 0.55, 1), F.numb, 0.5)
+    local f = HESI.bankFlash
+    local oldA = D.a
+    local gr = rgbm(0.3, 1, 0.5, 1)
+    D.a = oldA * f * 0.45
+    rect(cx - 160, 8, cx + 160, 70, gr, 31)
+    D.a = oldA * clamp(f * 1.6, 0, 1)
+    text('BANKED', 14, cx, 10, T.white, F.numb, 0.5)
+    text('+' .. HESI.fmt(HESI.lastBank), 28 + math.floor(f * 6), cx, 28, T.white, F.numb, 0.5)
     D.a = oldA
   end
 end
