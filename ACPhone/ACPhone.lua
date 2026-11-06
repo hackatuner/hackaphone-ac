@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '0.4'
-local BUILD = 4
+local VERSION = '0.5'
+local BUILD = 5
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -77,7 +77,18 @@ local S = ac.storage({
   wallpaper = 1,
   accent = 0,          -- 0 = use the theme's colour
   theme = 1,
+  themeId = 'classic',
   thick = true,
+  font = 1,
+  motifs = false,
+  wallMode = 'theme',
+  wallPath = '',
+  wallDim = 0.35,
+  iconStyle = 1,
+  barStyle = 1,
+  hiddenApps = '',
+  liveryPresets = '[]',
+  skinFavs = '',
   hesiOn = true,
   hesiPB = 0,
   hesiTotal = 0,
@@ -159,8 +170,14 @@ local T = {
 -- Fonts (DirectWrite system fonts, with colour emoji)
 -- ===========================================================================
 
-local function makeFont(weight, key)
-  local f = ui.DWriteFont('Segoe UI')
+local FONT_FAMILIES = {
+  { name = 'Modern', family = 'Segoe UI Variable Display' },
+  { name = 'Classic', family = 'Segoe UI' },
+  { name = 'Sport', family = 'Bahnschrift' },
+}
+
+local function makeFont(weight, key, family)
+  local f = ui.DWriteFont(family or 'Segoe UI')
   if weight then f = f:weight(weight) end
   if f.allowEmoji then f = f:allowEmoji(true) end
   return { f = f, key = key }
@@ -169,12 +186,18 @@ end
 local F = {}
 local function buildFonts()
   local W_ = ui.DWriteFont.Weight
+  local fam = (FONT_FAMILIES[S.font] or FONT_FAMILIES[1]).family
   if S.thick then
-    F.r, F.m, F.sb, F.b, F.l = makeFont(W_.Medium, 'r'), makeFont(W_.SemiBold, 'm'), makeFont(W_.Bold, 'sb'), makeFont(W_.Black, 'b'), makeFont(W_.Regular, 'l')
+    F.r, F.m, F.sb, F.b, F.l = makeFont(W_.Medium, 'r', fam), makeFont(W_.SemiBold, 'm', fam), makeFont(W_.Bold, 'sb', fam), makeFont(W_.Black, 'b', fam), makeFont(W_.Regular, 'l', fam)
   else
-    F.r, F.m, F.sb, F.b, F.l = makeFont(W_.Regular, 'r'), makeFont(W_.Medium, 'm'), makeFont(W_.SemiBold, 'sb'), makeFont(W_.Bold, 'b'), makeFont(W_.Light, 'l')
+    F.r, F.m, F.sb, F.b, F.l = makeFont(W_.Regular, 'r', fam), makeFont(W_.Medium, 'm', fam), makeFont(W_.SemiBold, 'sb', fam), makeFont(W_.Bold, 'b', fam), makeFont(W_.Light, 'l', fam)
   end
-  for _, f in pairs(F) do f.key = f.key .. (S.thick and 'T' or '') end
+  -- numbers: Bahnschrift (DIN style, motorsport look)
+  F.num = makeFont(W_.SemiBold, 'n', 'Bahnschrift')
+  F.numb = makeFont(W_.Bold, 'nb', 'Bahnschrift')
+  F.numl = makeFont(W_.Light, 'nl', 'Bahnschrift')
+  local suffix = (S.thick and 'T' or '') .. (S.font or 1)
+  for _, f in pairs(F) do f.key = f.key .. suffix end
 end
 buildFonts()
 
@@ -186,6 +209,15 @@ local THEMES = {
   { id = 'classic', name = 'Classic', tag = 'Clean iOS dark', motif = nil, art = 'glow',
     top = rgbm(0.10, 0.12, 0.30, 1), bottom = rgbm(0.02, 0.02, 0.06, 1), bg = rgbm(0, 0, 0, 1),
     cell = rgbm(0.11, 0.11, 0.12, 1), accent = rgbm(0.04, 0.52, 1, 1), accent2 = rgbm(0.35, 0.8, 1, 1), icons = 'color' },
+  { id = 'graphite', name = 'Graphite', tag = 'Monochrome · minimal', motif = nil, art = 'graphite',
+    top = rgbm(0.16, 0.16, 0.17, 1), bottom = rgbm(0.02, 0.02, 0.02, 1), bg = rgbm(0.01, 0.01, 0.01, 1),
+    cell = rgbm(0.10, 0.10, 0.10, 1), accent = rgbm(0.92, 0.92, 0.94, 1), accent2 = rgbm(0.6, 0.6, 0.62, 1), icons = 'color' },
+  { id = 'aurora', name = 'Aurora', tag = 'Soft northern lights', motif = nil, art = 'aurora',
+    top = rgbm(0.02, 0.06, 0.12, 1), bottom = rgbm(0.01, 0.02, 0.04, 1), bg = rgbm(0.01, 0.02, 0.04, 1),
+    cell = rgbm(0.06, 0.09, 0.13, 1), accent = rgbm(0.30, 0.95, 0.75, 1), accent2 = rgbm(0.6, 0.4, 1, 1), icons = 'color' },
+  { id = 'carbon', name = 'Carbon', tag = 'Weave · race red', motif = nil, art = 'carbon',
+    top = rgbm(0.07, 0.07, 0.08, 1), bottom = rgbm(0.02, 0.02, 0.02, 1), bg = rgbm(0.02, 0.02, 0.02, 1),
+    cell = rgbm(0.09, 0.09, 0.10, 1), accent = rgbm(0.95, 0.12, 0.18, 1), accent2 = rgbm(1, 1, 1, 1), icons = 'color' },
   { id = 'blood', name = 'Blood Moon', tag = 'Dark red · skulls', motif = '💀', art = 'moon',
     top = rgbm(0.28, 0.02, 0.04, 1), bottom = rgbm(0.03, 0.0, 0.01, 1), bg = rgbm(0.04, 0.0, 0.01, 1),
     cell = rgbm(0.14, 0.03, 0.04, 1), accent = rgbm(0.95, 0.10, 0.15, 1), accent2 = rgbm(1, 0.45, 0.3, 1), icons = 'tint' },
@@ -217,6 +249,7 @@ local function mix(a, b, t) return rgbm(lerp(a.r, b.r, t), lerp(a.g, b.g, t), le
 local function applyTheme(i)
   THEME = THEMES[i] or THEMES[1]
   S.theme = i
+  S.themeId = THEME.id
   local th = THEME
   T.bg = th.bg
   T.cell = th.cell
@@ -227,7 +260,11 @@ local function applyTheme(i)
   T.border = rgbm(th.accent.r, th.accent.g, th.accent.b, 0.22)
   T.sep = rgbm(th.accent.r * 0.4 + 0.2, th.accent.g * 0.4 + 0.2, th.accent.b * 0.4 + 0.2, 0.35)
 end
-applyTheme(S.theme or 1)
+do
+  local idx = 1
+  for i, th in ipairs(THEMES) do if th.id == S.themeId then idx = i end end
+  applyTheme(idx)
+end
 
 -- ===========================================================================
 -- Drawing layer: every draw call goes through here so screens can be slid,
@@ -258,8 +295,52 @@ local function circleLine(x, y, rad, c, th) ui.drawCircle(P(x, y), rad, A(c), 32
 local function line(x1, y1, x2, y2, c, th) ui.drawLine(P(x1, y1), P(x2, y2), A(c), th or 1) end
 
 local mcache, mcount = {}, 0
-local function measure(s, size, font)
-  font = font or F.r
+-- emoji in the UI are replaced by CSP's monochrome icon set for a clean, modern look
+local ICON_MAP = {
+  ['🔥'] = 'BURN', ['📯'] = 'BELL', ['💬'] = 'CHAT', ['✓'] = 'CONFIRM', ['♫'] = 'MUSIC', ['☆'] = 'STAR_EMPTY',
+  ['⏱️'] = 'STOPWATCH', ['⏱'] = 'STOPWATCH', ['👥'] = 'GROUP', ['🚶'] = 'PERSON', ['🏎️'] = 'CAR_FRONT',
+  ['🌫️'] = 'WEATHER_FOG', ['🌦️'] = 'WEATHER_RAIN_LIGHT', ['🌧️'] = 'WEATHER_RAIN', ['🎛️'] = 'SLIDERS', ['⚠️'] = 'WARNING',
+  ['👋'] = 'BEFRIEND', ['🌐'] = 'GLOBAL', ['⭐'] = 'STAR_FULL', ['★'] = 'STAR_FULL', ['🏁'] = 'FLAG', ['📡'] = 'SATELLITE_DISH',
+  ['🎨'] = 'PALETTE', ['⛅'] = 'WEATHER_FEW_CLOUDS', ['⛈️'] = 'WEATHER_STORM', ['❄️'] = 'WEATHER_SNOW', ['💨'] = 'WIND',
+  ['🗺️'] = 'MAP', ['🖥️'] = 'MONITOR', ['📉'] = 'DOWN_ALT', ['📈'] = 'UP_ALT', ['🔒'] = 'PADLOCK', ['🌙'] = 'MOON',
+  ['✨'] = 'PALETTE', ['📷'] = 'CAMERA', ['🎬'] = 'CLAPPERBOARD', ['🔍'] = 'SEARCH', ['👁'] = 'EYE', ['📸'] = 'CAMERA_ALT',
+  ['🌤️'] = 'WEATHER_FEW_CLOUDS', ['🌨️'] = 'WEATHER_SNOW_LIGHT', ['🌡️'] = 'THERMOMETER', ['🕒'] = 'CLOCK', ['🎥'] = 'VIDEO_CAMERA',
+  ['🚁'] = 'PLANE', ['🌀'] = 'WIND', ['⚙️'] = 'SETTINGS', ['🏷️'] = 'TAG', ['🔧'] = 'WRENCH', ['📊'] = 'STATS',
+  ['🎚️'] = 'SLIDERS', ['📱'] = 'CELLPHONE', ['🔔'] = 'NOTIFICATIONS', ['⬆️'] = 'DOWNLOAD', ['🧩'] = 'APPS', ['💥'] = 'COLLISION',
+  ['🏆'] = 'TROPHY', ['📍'] = 'LOCATION', ['🫥'] = 'HIDE', ['🚗'] = 'CAR_FRONT', ['🎲'] = 'DICE', ['👤'] = 'USER',
+  ['⏳'] = 'HOURGLASS', ['☀️'] = 'WEATHER_CLEAR', ['🌥️'] = 'WEATHER_OVERCAST', ['☁️'] = 'WEATHER_OVERCAST', ['🛣️'] = 'ROAD',
+  ['💧'] = 'WEATHER_DRIZZLE', ['🚦'] = 'TRAFFIC_LIGHT', ['🧭'] = 'COMPASS', ['🧑'] = 'DRIVER', ['🎡'] = 'STEERING_WHEEL',
+  ['🦶'] = 'PEDALS', ['🌅'] = 'LANDSCAPE', ['⌨️'] = 'KEYBOARD', ['🔄'] = 'RESTART', ['🎯'] = 'TARGET', ['🖌️'] = 'PALETTE',
+  ['🅱️'] = 'FONT', ['🚪'] = 'LEAVE', ['⛽'] = 'FUEL', ['➤'] = 'NAVIGATION', ['⌖'] = 'CROSSHAIR', ['💾'] = 'SAVE', ['📋'] = 'CLIPBOARD',
+  ['⤢'] = 'MAXIMIZE', ['⟳'] = 'RESTART', ['●'] = 'RECORD', ['🌌'] = 'CONSTELLATION',
+}
+ICON_MAP['⤡'] = 'FULLSCREEN'
+
+local iconSplit = {}
+-- returns glyph id, rest of the string (or nil when there is no leading icon)
+local function leadingIcon(s)
+  local v = iconSplit[s]
+  if v ~= nil then if v == false then return nil end return v[1], v[2] end
+  local b = s:byte(1)
+  if b == 64 then -- '@ICON_ID rest'
+    local id, rest = s:match('^@([A-Z0-9_]+)%s*(.*)$')
+    if id then iconSplit[s] = { id, rest } return id, rest end
+  end
+  if b and b >= 0xE2 then
+    for len = math.min(#s, 14), 1, -1 do
+      local g = ICON_MAP[s:sub(1, len)]
+      if g then
+        local rest = s:sub(len + 1):gsub('^[\239\184\143]*', ''):gsub('^%s+', '')
+        iconSplit[s] = { g, rest }
+        return g, rest
+      end
+    end
+  end
+  iconSplit[s] = false
+  return nil
+end
+
+local function rawMeasure(s, size, font)
   local k = font.key .. size .. '\1' .. s
   local v = mcache[k]
   if v then return v end
@@ -272,11 +353,34 @@ local function measure(s, size, font)
   return v
 end
 
+local function measure(s, size, font)
+  font = font or F.r
+  local g, rest = leadingIcon(s)
+  if g then
+    local w = size * 1.05
+    if rest ~= '' then w = w + size * 0.4 + rawMeasure(rest, size, font).x end
+    return vec2(w, size * 1.33)
+  end
+  return rawMeasure(s, size, font)
+end
+
+local function glyph(id, x, y, size, c)
+  ui.drawIcon(id, P(x, y), P(x + size, y + size), A(c or T.label))
+end
+
 -- align: 0 = left (x is left edge), 0.5 = centred on x, 1 = right edge at x
 local function text(s, size, x, y, c, font, align)
   s = tostring(s)
   font = font or F.r
   if align and align ~= 0 then x = x - measure(s, size, font).x * align end
+  local g, rest = leadingIcon(s)
+  if g then
+    local gs = size * 1.05
+    glyph(g, x, y + size * 0.16, gs, c)
+    if rest == '' then return end
+    x = x + gs + size * 0.4
+    s = rest
+  end
   ui.pushDWriteFont(font.f)
   ui.dwriteDrawText(s, size, P(x, y), A(c or T.label))
   ui.popDWriteFont()
@@ -1763,7 +1867,7 @@ end
 local HESI = {
   running = false, run = 0, mult = 1, combo = 0, comboMax = 7, slowT = 0, events = {}, feed = {},
   cars = {}, lastPassSide = 0, lastPassAt = -10, near = 0, best = 0, sessionBest = 0, sessionTotal = 0,
-  board = {}, sendAt = 0, heat = 0, crashFlash = 0, bankFlash = 0, lastBank = 0, runTime = 0,
+  board = {}, sendAt = 0, stats = { maxMult = 1, top = 0 }, lastRun = nil, heat = 0, crashFlash = 0, bankFlash = 0, lastBank = 0, runTime = 0,
   startSpeed = 70, endSpeed = 30,
 }
 local HESI_EVENTS = {
@@ -1793,9 +1897,21 @@ local function pushFeed(text, color, big)
   while #HESI.feed > 6 do table.remove(HESI.feed) end
 end
 
+local TIERS = {
+  { at = 1, name = '' }, { at = 3, name = 'HEATING UP' }, { at = 6, name = 'ON FIRE' },
+  { at = 10, name = 'UNTOUCHABLE' }, { at = 15, name = 'GOD MODE' },
+}
+local function tierFor(m)
+  local t = TIERS[1]
+  for _, x in ipairs(TIERS) do if m >= x.at then t = x end end
+  return t
+end
+HESI.tier = function() return tierFor(HESI.mult).name end
+
 local function addEvent(kind, extra)
   local e = HESI_EVENTS[kind]
   if not e then return end
+  local before = tierFor(HESI.mult)
   local car = ac.getCar(0)
   local speedFactor = clamp(car.speedKmh / 120, 0.6, 3)
   local pts = e.pts * HESI.mult * speedFactor * (extra or 1)
@@ -1804,13 +1920,19 @@ local function addEvent(kind, extra)
   HESI.combo = HESI.comboMax
   HESI.heat = math.min(1, HESI.heat + 0.25)
   if kind ~= 'overtake' then HESI.near = HESI.near + 1 end
+  local st = HESI.stats
+  st[kind] = (st[kind] or 0) + 1
+  if HESI.mult > st.maxMult then st.maxMult = HESI.mult end
   pushFeed(e.name .. '  +' .. fmtPts(pts), e.color, kind == 'split' or kind == 'close' or kind == 'trap')
+  local after = tierFor(HESI.mult)
+  if after.at > before.at and after.name ~= '' then pushFeed(after.name, rgbm(1, 0.8, 0.25, 1), true) end
 end
 
 local function startRun()
   HESI.running, HESI.run, HESI.mult, HESI.combo, HESI.slowT, HESI.runTime = true, 0, 1, 0, 0, 0
   HESI.cars = {}
   HESI.trapDone = false
+  HESI.stats = { maxMult = 1, top = 0 }
   pushFeed('RUN STARTED', rgbm(0.4, 1, 0.5, 1))
 end
 
@@ -1827,6 +1949,10 @@ local function endRun(crashed)
   if not HESI.running then return end
   HESI.running = false
   local score = math.floor(HESI.run)
+  local st = HESI.stats or {}
+  HESI.lastRun = { score = score, crashed = crashed, time = HESI.runTime, top = st.top or 0, maxMult = st.maxMult or 1,
+    near = (st.near or 0), close = (st.close or 0), split = (st.split or 0), oncoming = (st.oncoming or 0),
+    overtake = (st.overtake or 0), pb = (not crashed) and score > S.hesiPB, at = os.date('%H:%M') }
   S.hesiRuns = S.hesiRuns + 1
   S.hesiNear = S.hesiNear + HESI.near
   HESI.near = 0
@@ -1892,6 +2018,7 @@ local function hesiUpdate(dt)
   end
 
   HESI.runTime = HESI.runTime + dt
+  if HESI.stats and speed > HESI.stats.top then HESI.stats.top = speed end
   -- speed points
   HESI.run = HESI.run + dt * (speed / 12) * HESI.mult
   -- combo timer / multiplier decay
@@ -1964,7 +2091,155 @@ if ac.onCarCollision then
 end
 end
 
-local APPMOD = { Messages = {}, Friends = {}, Camera = {}, Walk = {}, Video = {}, Chase = {}, Plates = {}, Skins = {}, Weather = {}, Library = {}, Settings = {}, Maps = {}, Hud = {}, Livery = {}, Themes = {}, CutUp = {} }
+-- ===========================================================================
+-- Music controls (Windows media keys) and image wallpapers
+-- ===========================================================================
+
+local MEDIA = { pendingPlay = nil, pendingAt = 0, lastSend = 0 }
+local WALL = {}
+
+do
+-- media keys through Windows Script Host: 179 play/pause, 176 next, 177 previous, 175 vol up, 174 vol down
+local function sendMediaKey(vk)
+  if clock() - MEDIA.lastSend < 0.25 then return end
+  MEDIA.lastSend = clock()
+  if not os.runConsoleProcess then toast('Music controls', 'Needs a newer CSP', '⚠️') return end
+  pcall(os.runConsoleProcess, {
+    filename = 'powershell.exe',
+    arguments = { '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command',
+      '(New-Object -ComObject WScript.Shell).SendKeys([char]' .. vk .. ')' },
+    timeout = 6000, terminateWithScript = false,
+  }, function() end)
+end
+
+function MEDIA.playPause()
+  local m = LIVE.music
+  MEDIA.pendingPlay = not (m and m.isPlaying)
+  MEDIA.pendingAt = clock()
+  sendMediaKey(179)
+end
+function MEDIA.next() sendMediaKey(176) end
+function MEDIA.prev() sendMediaKey(177) end
+function MEDIA.volUp() sendMediaKey(175) end
+function MEDIA.volDown() sendMediaKey(174) end
+
+-- current track, with an optimistic play state right after a tap
+function MEDIA.now()
+  local m = LIVE.music
+  if not m or not m.title or m.title == '' then return nil end
+  local playing = m.isPlaying
+  if MEDIA.pendingPlay ~= nil then
+    if clock() - MEDIA.pendingAt < 1.5 then playing = MEDIA.pendingPlay else MEDIA.pendingPlay = nil end
+  end
+  return m, playing
+end
+
+-- round icon button
+function MEDIA.button(id, icon, cx, cy, size, c, bg)
+  local fired, pressed = tap(id, cx - size / 2 - 6, cy - size / 2 - 6, cx + size / 2 + 6, cy + size / 2 + 6)
+  local p = anim(id .. '#p', pressed and 1 or 0, 30)
+  if bg then circle(cx, cy, size / 2 + 8, A(bg, 1 - p * 0.3)) end
+  if p > 0.01 then circle(cx, cy, size / 2 + 8, rgbm(1, 1, 1, 0.12 * p)) end
+  glyph(icon, cx - size / 2, cy - size / 2, size, A(c or T.white, 1 - p * 0.3))
+  return fired
+end
+
+-- previous / play-pause / next row centred on cx
+function MEDIA.controls(idp, cx, cy, size, c)
+  local _, playing = MEDIA.now()
+  local gap = size * 2.4
+  if MEDIA.button(idp .. 'prev', 'PREVIOUS', cx - gap, cy, size * 0.8, c) then MEDIA.prev() end
+  if MEDIA.button(idp .. 'pp', playing and 'PAUSE' or 'PLAY', cx, cy, size, c) then MEDIA.playPause() end
+  if MEDIA.button(idp .. 'next', 'NEXT', cx + gap, cy, size * 0.8, c) then MEDIA.next() end
+end
+
+-- album art (or a gradient placeholder)
+function MEDIA.cover(m, x1, y1, x2, y2, r)
+  rect(x1, y1, x2, y2, accent(), r)
+  ui.drawRectFilledMultiColor(P(x1, y1 + r), P(x2, y2 - r), A(accent()), A(accent()), A(mix(accent(), rgbm(0, 0, 0, 1), 0.5)), A(mix(accent(), rgbm(0, 0, 0, 1), 0.5)))
+  local drawn = false
+  if m and m.hasCover then drawn = pcall(ui.drawImageRounded, m, P(x1, y1), P(x2, y2), A(T.white), nil, nil, r) end
+  if not drawn then
+    local s = (x2 - x1) * 0.4
+    glyph('MUSIC', (x1 + x2) / 2 - s / 2, (y1 + y2) / 2 - s / 2, s, rgbm(1, 1, 1, 0.85))
+  end
+end
+
+local function fmtTime(sec)
+  if not sec or sec < 0 then return '--:--' end
+  return string.format('%d:%02d', math.floor(sec / 60), math.floor(sec % 60))
+end
+MEDIA.fmtTime = fmtTime
+
+-- ---------------------------------------------------------------- wallpapers
+function WALL.folder() return ac.getFolder(ac.FolderID.ScriptOrigin) .. '/wallpapers' end
+
+function WALL.path(mode)
+  mode = mode or S.wallMode
+  if mode == 'car' then
+    local base = ac.getFolder(ac.FolderID.ContentCars) .. '/' .. (ac.getCarID(0) or '') .. '/skins/' .. (ac.getCarSkinID(0) or '')
+    if io.fileExists(base .. '/preview.jpg') then return base .. '/preview.jpg' end
+    if io.fileExists(base .. '/preview.png') then return base .. '/preview.png' end
+  elseif mode == 'track' then
+    local p = ac.getFolder(ac.FolderID.CurrentTrackLayoutUI) .. '/preview.png'
+    if io.fileExists(p) then return p end
+  elseif mode == 'custom' then
+    if S.wallPath ~= '' and io.fileExists(S.wallPath) then return S.wallPath end
+  end
+  return nil
+end
+
+-- draws an image filling the box (cropped, never stretched)
+function WALL.cover(path, x1, y1, x2, y2, rounding, tint)
+  local sz = ui.imageSize(path)
+  if not sz or sz.x <= 0 or sz.y <= 0 then return false end
+  local boxAR, imgAR = (x2 - x1) / (y2 - y1), sz.x / sz.y
+  local uv1, uv2
+  if imgAR > boxAR then
+    local f = boxAR / imgAR
+    uv1, uv2 = vec2((1 - f) / 2, 0), vec2((1 + f) / 2, 1)
+  else
+    local f = imgAR / boxAR
+    uv1, uv2 = vec2(0, (1 - f) / 2), vec2(1, (1 + f) / 2)
+  end
+  ui.drawImageRounded(path, P(x1, y1), P(x2, y2), A(tint or T.white), uv1, uv2, rounding or 0, ui.CornerFlags.All)
+  return true
+end
+
+function WALL.saved()
+  local out = {}
+  local ok, list = pcall(io.scanDir, WALL.folder(), '*')
+  if ok and type(list) == 'table' then
+    for _, f in ipairs(list) do
+      local e = f:lower():match('%.(%w+)$')
+      if e == 'png' or e == 'jpg' or e == 'jpeg' or e == 'bmp' or e == 'dds' then out[#out + 1] = WALL.folder() .. '/' .. f end
+    end
+  end
+  return out
+end
+
+-- pick any image on the PC; it's copied into the phone so it stays available
+function WALL.import()
+  if not os.openFileDialog then toast('Not available', 'Needs a newer CSP', '⚠️') return end
+  os.openFileDialog({
+    title = 'Choose a wallpaper',
+    fileTypes = { { name = 'Images', mask = '*.png;*.jpg;*.jpeg;*.bmp' } },
+  }, function(err, filename)
+    if err or not filename or filename == '' then return end
+    pcall(io.createDir, WALL.folder())
+    local name = filename:match('[^/\\]+$') or ('wall' .. os.time() .. '.jpg')
+    local dest = WALL.folder() .. '/' .. name
+    if io.copyFile(filename, dest, false) or io.fileExists(dest) then
+      S.wallPath, S.wallMode = dest, 'custom'
+      toast('Wallpaper set', name, '🌅')
+    else
+      toast('Couldn’t copy image', name, '⚠️')
+    end
+  end)
+end
+end
+
+local APPMOD = { Messages = {}, Friends = {}, Camera = {}, Walk = {}, Video = {}, Chase = {}, Plates = {}, Skins = {}, Weather = {}, Library = {}, Settings = {}, Maps = {}, Hud = {}, Livery = {}, Themes = {}, CutUp = {}, Music = {} }
 
 -- ===========================================================================
 -- Shared pieces for app screens
@@ -2670,51 +2945,96 @@ end
 
 function APPMOD.Skins.root()
   local scr = { title = 'Skins' }
+  local search, filter = '', 1
   function scr.draw()
     bgFill()
     local carID = ac.getCarID(0) or ''
     local data = SK.skinScan(carID)
+    local favKey = function(k) return carID .. '/' .. k end
     local s = scrollBegin('skins', 50, BOTTOM)
     local y = largeTitle('Skins', 96, s.y)
-    textFit(ac.getCarName(0) or carID, 14, 16, y - 10, SW - 32, T.label2)
-    y = y + 18
-    if SK.status ~= '' then
-      rect(16, y, SW - 16, y + 36, A(accent(), 0.18), 10)
-      textFit((SK.busy[0] and '⏳ Loading textures…' or '✓ ' .. SK.status), 14, 28, y + 8, SW - 56, accent(), F.m)
-      y = y + 48
-    end
-    local cols, gap = 2, 12
-    local cw = (SW - 32 - gap) / cols
-    local ch = cw * 0.62 + 46
     local active = SK.skinActive(0)
-    local items = data.list
-    for i, sk in ipairs(items) do
-      local c, r = (i - 1) % cols, math.floor((i - 1) / cols)
-      local x, yy = 16 + c * (cw + gap), y + r * (ch + gap)
-      local fired, pressed = tap('sk' .. i, x, yy, x + cw, yy + ch)
-      local sel = active == sk.key
-      rect(x, yy, x + cw, yy + ch, pressed and T.cellHi or T.cell, 14)
-      local ih = cw * 0.62
-      -- only load preview images that are on screen
-      local c2 = clipStack[#clipStack]
-      local onScreen = not c2 or (D.y + yy + ch > c2[1].y and D.y + yy < c2[2].y)
-      if sk.preview and onScreen then
-        ui.drawImageRounded(sk.preview, P(x, yy), P(x + cw, yy + ih), A(T.white), nil, nil, 14, ui.CornerFlags.Top)
-      else
-        rect(x, yy, x + cw, yy + ih, rgbm(0.2, 0.2, 0.22, 1), 14, ui.CornerFlags.Top)
-        text('🎨', 26, x + cw / 2, yy + ih / 2 - 18, T.white, F.r, 0.5)
-      end
-      if sel then
-        rectLine(x, yy, x + cw, yy + ch, accent(), 14, 3)
-        circle(x + cw - 18, yy + 18, 11, accent())
-        text('✓', 13, x + cw - 18, yy + 9, T.white, F.b, 0.5)
-      end
-      textFit(sk.name, 13, x + 10, yy + ih + 6, cw - 20, T.label, F.sb)
-      textFit(sk.number ~= '' and ('#' .. sk.number .. (sk.team ~= '' and (' · ' .. sk.team) or '')) or (sk.key == SK.skinOriginal(0) and 'Server skin' or ''), 11, x + 10, yy + ih + 25, cw - 20, T.label2)
-      if fired and not sel and not SK.busy[0] then SK.skinSet(sk.key) end
+    local cur = data.byKey[active]
+    -- hero: the skin you're wearing
+    local hw, hh = SW - 32, (SW - 32) * 0.56
+    if not (cur and cur.preview and WALL.cover(cur.preview, 16, y, 16 + hw, y + hh, 18)) then
+      rect(16, y, 16 + hw, y + hh, T.cell, 18)
+      glyph('PHOTOGRAPH', SW / 2 - 20, y + hh / 2 - 20, 40, T.label3)
     end
-    y = y + math.ceil(#items / cols) * (ch + gap)
-    if #items == 0 then text('No skins found for this car.', 15, SW / 2, y + 30, T.label2, F.r, 0.5) y = y + 80 end
+    ui.drawRectFilledMultiColor(P(16, y + hh * 0.45), P(16 + hw, y + hh), A(rgbm(0, 0, 0, 0)), A(rgbm(0, 0, 0, 0)), A(rgbm(0, 0, 0, 0.75)), A(rgbm(0, 0, 0, 0.75)))
+    text('WEARING NOW', 11, 30, y + hh - 62, accent(), F.b)
+    textFit(cur and cur.name or SK.prettySkin(active), 20, 30, y + hh - 46, hw - 120, T.white, F.b)
+    textFit(ac.getCarName(0) or carID, 13, 30, y + hh - 22, hw - 120, rgbm(1, 1, 1, 0.7), F.m)
+    if SK.busy[0] then ui.drawLoadingSpinner(P(16 + hw - 44, y + 14), P(16 + hw - 14, y + 44), A(T.white)) end
+    if W.button('sk.rand', '@DICE Random', 16 + hw - 112, y + hh - 50, 96, 34, 'gray') and #data.list > 1 and not SK.busy[0] then
+      local pick
+      repeat pick = data.list[math.random(#data.list)] until pick.key ~= active
+      SK.skinSet(pick.key)
+    end
+    y = y + hh + 14
+    search = W.field('sk.search', search, 'Search ' .. #data.list .. ' skins', 16, y, SW - 32, 38, { icon = '🔍' })
+    y = y + 48
+    filter = W.segmented('sk.filter', { 'All', 'Favourites', 'Friends' }, filter, 16, y, SW - 32)
+    y = y + 48
+    if filter == 3 then
+      local any = false
+      for _, p in ipairs(getPlayers()) do
+        any = true
+        local k = SK.skinActive(p.index)
+        local d = SK.skinScan(ac.getCarID(p.index) or '')
+        local info = d.byKey[k]
+        rect(16, y, SW - 16, y + 74, T.cell, 14)
+        if info and info.preview then WALL.cover(info.preview, 16, y, 130, y + 74, 14) else rect(16, y, 130, y + 74, T.cellHi, 14) end
+        textFit(p.name, 15, 142, y + 12, SW - 170, T.label, F.sb)
+        textFit(info and info.name or SK.prettySkin(k or ''), 13, 142, y + 34, SW - 170, T.label2)
+        textFit(p.car, 11, 142, y + 52, SW - 170, T.label3)
+        y = y + 82
+      end
+      if not any then text('No friends on the server', 14, SW / 2, y + 20, T.label2, F.r, 0.5) y = y + 60 end
+    else
+      local items = {}
+      local q = search:lower()
+      for _, sk in ipairs(data.list) do
+        local fav = listHas(S.skinFavs, favKey(sk.key))
+        if (filter == 1 or fav) and (q == '' or sk.name:lower():find(q, 1, true) or sk.key:find(q, 1, true)) then items[#items + 1] = sk end
+      end
+      local cols, gap = 2, 12
+      local cw = (SW - 32 - gap) / cols
+      local ih = cw * 0.6
+      local ch = ih + 44
+      for i, sk in ipairs(items) do
+        local c, r = (i - 1) % cols, math.floor((i - 1) / cols)
+        local x, yy = 16 + c * (cw + gap), y + r * (ch + gap)
+        local sel = active == sk.key
+        local fav = listHas(S.skinFavs, favKey(sk.key))
+        local starHit = tap('skf' .. i, x + cw - 40, yy, x + cw, yy + 36)
+        if starHit then S.skinFavs = listToggle(S.skinFavs, favKey(sk.key)) end
+        local fired, pressed = tap('sk' .. i, x, yy, x + cw, yy + ch)
+        rect(x, yy, x + cw, yy + ch, pressed and T.cellHi or T.cell, 14)
+        local c2 = clipStack[#clipStack]
+        local onScreen = not c2 or (D.y + yy + ch > c2[1].y and D.y + yy < c2[2].y)
+        if not (sk.preview and onScreen and WALL.cover(sk.preview, x, yy, x + cw, yy + ih, 14)) then
+          rect(x, yy, x + cw, yy + ih, rgbm(0.18, 0.18, 0.2, 1), 14, ui.CornerFlags.Top)
+          glyph('PALETTE', x + cw / 2 - 14, yy + ih / 2 - 14, 28, T.label3)
+        end
+        circle(x + cw - 20, yy + 18, 13, rgbm(0, 0, 0, 0.45))
+        glyph(fav and 'STAR_FULL' or 'STAR_EMPTY', x + cw - 29, yy + 9, 18, fav and T.yellow or T.white)
+        if sel then
+          rectLine(x, yy, x + cw, yy + ch, accent(), 14, 2.5)
+          circle(x + 18, yy + 18, 11, accent())
+          glyph('CONFIRM', x + 11, yy + 11, 14, T.white)
+        end
+        textFit(sk.name, 13, x + 10, yy + ih + 6, cw - 20, T.label, F.sb)
+        local sub = sk.number ~= '' and ('#' .. sk.number .. (sk.team ~= '' and (' · ' .. sk.team) or '')) or (sk.key == SK.skinOriginal(0) and 'Server skin' or sk.folder)
+        textFit(sub, 11, x + 10, yy + ih + 25, cw - 20, T.label2)
+        if fired and not starHit and not sel and not SK.busy[0] then SK.skinSet(sk.key) end
+      end
+      y = y + math.ceil(#items / cols) * (ch + gap)
+      if #items == 0 then
+        text(filter == 2 and 'Tap ☆ on a skin to favourite it' or 'No skins match', 14, SW / 2, y + 20, T.label2, F.r, 0.5)
+        y = y + 70
+      end
+    end
     y = W.sectionHeader('Online', y + 10)
     W.groupBg(y, 2)
     S.skinSync = W.toggleRow('sk.sync', 'Share my skin', S.skinSync, y, { first = true })
@@ -2772,11 +3092,15 @@ function APPMOD.Weather.root()
     local top, bottom = skyColors(w)
     bgFill(bottom)
     ui.drawRectFilledMultiColor(P(0, 0), P(SW, SH * 0.55), A(top), A(top), A(bottom), A(bottom))
+    local tp = WALL.path('track')
+    if tp and WALL.cover(tp, 0, 0, SW, SH * 0.5, SCREEN.r, rgbm(1, 1, 1, 0.55)) then
+      ui.drawRectFilledMultiColor(P(0, SH * 0.2), P(SW, SH * 0.5), A(rgbm(bottom.r, bottom.g, bottom.b, 0)), A(rgbm(bottom.r, bottom.g, bottom.b, 0)), A(bottom), A(bottom))
+    end
     local s = scrollBegin('weather', 50, BOTTOM)
     local y = 70
     text(ac.getTrackName and ac.getTrackName() or 'Track', 26, SW / 2, y, T.white, F.m, 0.5)
     y = y + 38
-    text(string.format('%d°', math.floor(w.temp + 0.5)), 86, SW / 2 + 12, y - 8, T.white, F.l, 0.5)
+    text(string.format('%d°', math.floor(w.temp + 0.5)), 92, SW / 2 + 12, y - 12, T.white, F.numl, 0.5)
     y = y + 114
     text(w.icon .. '  ' .. w.name, 18, SW / 2, y, T.white, F.m, 0.5)
     y = y + 28
@@ -2795,7 +3119,7 @@ function APPMOD.Weather.root()
       local x, yy = 16 + c * (tw + 12), y + r * (tw * 0.8 + 12)
       rect(x, yy, x + tw, yy + tw * 0.8, rgbm(0, 0, 0, 0.22), 16)
       text(t[1], 12, x + 14, yy + 12, rgbm(1, 1, 1, 0.65), F.m)
-      text(t[2], 34, x + 14, yy + 32, T.white, F.r)
+      text(t[2], 34, x + 14, yy + 30, T.white, F.numl)
       text(t[3], 13, x + 14, yy + tw * 0.8 - 26, rgbm(1, 1, 1, 0.8), F.r)
     end
     y = y + 2 * (tw * 0.8 + 12) + 4
@@ -3054,7 +3378,7 @@ function APPMOD.Settings.root()
     y = W.sectionFooter('Tap the left of the status bar for notifications, the right for Control Centre. Tap the Dynamic Island to expand it.', y + 138)
     y = y + 8
     W.groupBg(y, 1)
-    if W.row('se.wp', 'Theme', y, { icon = '✨', iconBg = rgbm(0.6, 0.3, 0.9, 1), value = (THEME or THEMES[1]).name, chevron = true, first = true, last = true }) then navPush(APPMOD.Themes.root()) end
+    if W.row('se.wp', 'Personalize', y, { icon = '@SLIDERS', iconBg = rgbm(0.6, 0.3, 0.9, 1), value = (THEME or THEMES[1]).name, chevron = true, first = true, last = true }) then navPush(APPMOD.Themes.root()) end
     y = y + 66
     W.groupBg(y, 3)
     local hasUpd = UPD.latest and tonumber(UPD.latest.build) and tonumber(UPD.latest.build) > BUILD
@@ -3416,14 +3740,17 @@ local LV_PARTS = {
   rims = { 'car_paint_rims.dds', 'metal_detail_rim.dds', 'rim_detail.dds', 'rim_color.dds', 'rim_colour.dds' },
   calipers = { 'caliper_color.dds', 'caliper_colour.dds', 'metal_detail_caliper.dds', 'caliper_detail.dds', 'ext_caliper_color.dds' },
 }
-local LV_PATTERNS = { 'Solid', 'Fade', 'Stripes', 'Checker', 'Camo', 'Carbon' }
-local LV_FINISHES = { 'Original', 'Gloss', 'Matte', 'Metallic', 'Pearl', 'Chrome' }
+local LV_PATTERNS = { 'Solid', 'Fade', 'Stripes', 'Checker', 'Camo', 'Carbon', 'Racing', 'Diagonal', 'Split', 'Forged' }
+local LV_NEEDS2 = { Fade = true, Stripes = true, Checker = true, Camo = true, Racing = true, Diagonal = true, Split = true }
+local LV_FINISHES = { 'Original', 'Gloss', 'Matte', 'Metallic', 'Pearl', 'Chrome', 'Satin', 'Candy' }
 local LV_FINISH_PROPS = {
   Gloss = { ksSpecular = 0.6, ksSpecularEXP = 120, fresnelMaxLevel = 0.5, fresnelC = 0.06 },
   Matte = { ksSpecular = 0.06, ksSpecularEXP = 6, fresnelMaxLevel = 0.04, fresnelC = 0.01 },
   Metallic = { ksSpecular = 0.95, ksSpecularEXP = 60, fresnelMaxLevel = 0.65, fresnelC = 0.12 },
   Pearl = { ksSpecular = 0.85, ksSpecularEXP = 220, fresnelMaxLevel = 0.85, fresnelC = 0.3 },
   Chrome = { ksSpecular = 1.5, ksSpecularEXP = 500, fresnelMaxLevel = 1, fresnelC = 0.9, ksDiffuse = 0.08 },
+  Satin = { ksSpecular = 0.35, ksSpecularEXP = 30, fresnelMaxLevel = 0.2, fresnelC = 0.03 },
+  Candy = { ksSpecular = 1.1, ksSpecularEXP = 320, fresnelMaxLevel = 0.9, fresnelC = 0.25 },
 }
 local SWATCHES = {
   { 0.95, 0.95, 0.95 }, { 0.05, 0.05, 0.06 }, { 0.55, 0.57, 0.60 }, { 0.85, 0.08, 0.10 }, { 1.0, 0.45, 0.05 },
@@ -3497,6 +3824,25 @@ local function lvDrawPattern(cfg, size)
       local shade = rnd()
       local c = shade < 0.5 and col(cfg.c2, a) or rgbm(cfg.c1[1] * 0.6, cfg.c1[2] * 0.6, cfg.c1[3] * 0.6, a)
       display.rect({ pos = vec2(rnd() * size, rnd() * size), size = vec2(w, h), color = c })
+    end
+  elseif p == 'Racing' then
+    for _, cx in ipairs({ 0.40, 0.53 }) do display.rect({ pos = vec2(size * cx, 0), size = vec2(size * 0.07, size), color = col(cfg.c2, a) }) end
+  elseif p == 'Diagonal' then
+    local steps = 64
+    for k = -6, 6 do for j = 0, steps - 1 do
+      local x = j * size / steps
+      local yy = x * 0.55 + k * size / 5
+      if yy > -size / 20 and yy < size then display.rect({ pos = vec2(x, yy), size = vec2(size / steps + 1, size / 22), color = col(cfg.c2, a) }) end
+    end end
+  elseif p == 'Split' then
+    display.rect({ pos = vec2(0, size / 2), size = vec2(size, size / 2), color = col(cfg.c2, a) })
+  elseif p == 'Forged' then
+    local seed = 3
+    local function rnd() seed = (seed * 1103515245 + 12345) % 2147483648 return seed / 2147483648 end
+    display.rect({ pos = vec2(0, 0), size = vec2(size, size), color = rgbm(0.06, 0.06, 0.065, a) })
+    for _ = 1, 420 do
+      local v = 0.08 + rnd() * 0.14
+      display.rect({ pos = vec2(rnd() * size, rnd() * size), size = vec2(size * (0.01 + rnd() * 0.05), size * (0.005 + rnd() * 0.03)), color = rgbm(v, v, v * 1.04, a) })
     end
   elseif p == 'Carbon' then
     local n = 64
@@ -3689,7 +4035,7 @@ function APPMOD.Livery.root()
       local clicked
       clicked, y = chipFlow('lvp', LV_PATTERNS, 16, y, SW - 32, function(l) return LV_PATTERNS[cfg.pattern] == l end)
       if clicked then for i, n in ipairs(LV_PATTERNS) do if n == clicked then cfg.pattern = i end end lvSchedule() end
-      if cfg.pattern > 1 and cfg.pattern < 6 then
+      if LV_NEEDS2[LV_PATTERNS[cfg.pattern] or ''] then
         y = W.sectionHeader('Second colour', y + 6)
         local per = 7
         local sw = (SW - 32 - (per - 1) * 8) / per
@@ -3729,6 +4075,67 @@ function APPMOD.Livery.root()
       y = y + 58
       if cfg.calOn then y = colourPicker('cal', cfg.cal, y) end
     end
+    -- saved looks + share codes
+    y = W.sectionHeader('My liveries', y + 10)
+    local okp, presets = pcall(JSON.parse, S.liveryPresets)
+    presets = (okp and type(presets) == 'table') and presets or {}
+    if #presets > 0 then
+      W.groupBg(y, #presets, 56)
+      for i, pr in ipairs(presets) do
+        local pc = lvUnpack(pr.code or '')
+        if W.row('lvp' .. i, pr.name, y, { h = 56, sub = pc and ((LV_PATTERNS[pc.pattern] or '') .. ' · ' .. (LV_FINISHES[pc.finish] or '')) or '', tap = true, first = i == 1, last = i == #presets }) and pc then
+          local carNow = LV.cfg
+          for k, v2 in pairs(pc) do carNow[k] = v2 end
+          lvCommit()
+        end
+        if pc then
+          circle(SW - 118, y + 28, 10, col(pc.c1))
+          if LV_NEEDS2[LV_PATTERNS[pc.pattern] or ''] then circle(SW - 100, y + 28, 10, col(pc.c2)) end
+        end
+        if W.button('lvpd' .. i, '@TRASH', SW - 74, y + 12, 40, 32, 'danger') then
+          table.remove(presets, i)
+          S.liveryPresets = JSON.stringify(presets)
+          break
+        end
+        y = y + 56
+      end
+      y = y + 10
+    end
+    local enter
+    LV.newName, enter = W.field('lv.pname', LV.newName or '', 'Name this look', 16, y, SW - 32 - 96, 40, { round = 12, bg = T.cell })
+    if (W.button('lv.psave', 'Save', SW - 104, y, 88, 40, 'filled') or enter) then
+      local nm = trim(LV.newName or '') ~= '' and trim(LV.newName) or ('Livery ' .. (#presets + 1))
+      local copy = {}
+      for k, v2 in pairs(LV.cfg) do copy[k] = v2 end
+      copy.on = true
+      presets[#presets + 1] = { name = nm, code = lvPack(copy) }
+      S.liveryPresets = JSON.stringify(presets)
+      LV.newName = ''
+      toast('Livery saved', nm, '💾')
+    end
+    y = y + 52
+    local bw2 = (SW - 44) / 2
+    if W.button('lv.copy', '@COPY Copy code', 16, y, bw2, 40, 'gray') then
+      local copy = {}
+      for k, v2 in pairs(LV.cfg) do copy[k] = v2 end
+      copy.on = true
+      ac.setClipboardText('ACPL1:' .. lvPack(copy))
+      toast('Livery code copied', 'Paste it in chat for your friends', '📋')
+    end
+    if W.button('lv.paste', '@PASTE Paste code', 28 + bw2, y, bw2, 40, 'gray') then
+      local clip = tostring(ui.getClipboardText() or '')
+      local code = clip:match('ACPL1:([%d,]+)')
+      local pc = code and lvUnpack(code)
+      if pc and pc.on then
+        for k, v2 in pairs(pc) do LV.cfg[k] = v2 end
+        lvCommit()
+        toast('Livery imported', 'Applied from your clipboard', '📋')
+      else
+        toast('No livery code', 'Copy an ACPL1: code first', '⚠️')
+      end
+    end
+    y = y + 50
+    y = W.sectionFooter('Share codes work through chat or Discord. Copy, send, and your friend taps Paste.', y)
     y = W.sectionHeader('Online', y + 10)
     W.groupBg(y, 2)
     local v = W.toggleRow('lv.sync', 'Share my livery', S.liverySync, y, { first = true })
@@ -3752,71 +4159,198 @@ end
 
 
 do
+function APPMOD.Music.root()
+  local scr = { title = 'Music' }
+  function scr.draw()
+    local m, playing = MEDIA.now()
+    bgFill()
+    -- blurred-looking colour wash from the accent
+    ui.drawRectFilledMultiColor(P(0, 0), P(SW, SH * 0.7), A(mix(accent(), T.bg, 0.55)), A(mix(accent(), T.bg, 0.7)), A(T.bg), A(T.bg))
+    local cs = SW - 72
+    local y = 92
+    MEDIA.cover(m, 36, y, 36 + cs, y + cs, 22)
+    y = y + cs + 26
+    if m then
+      textFit(m.title, 22, 36, y, SW - 72, T.white, F.b)
+      textFit((m.artist ~= '' and m.artist or 'Unknown artist') .. (m.album ~= '' and (' · ' .. m.album) or ''), 15, 36, y + 32, SW - 72, T.label2, F.m)
+      y = y + 70
+      local dur, pos = m.trackDuration or -1, m.trackPosition or -1
+      local t = (dur > 0 and pos >= 0) and clamp(pos / dur, 0, 1) or 0
+      rect(36, y, SW - 36, y + 5, rgbm(1, 1, 1, 0.18), 3)
+      rect(36, y, 36 + (SW - 72) * t, y + 5, T.white, 3)
+      circle(36 + (SW - 72) * t, y + 2.5, 6, T.white)
+      text(MEDIA.fmtTime(pos), 12, 36, y + 12, T.label2, F.num)
+      text(dur > 0 and ('-' .. MEDIA.fmtTime(dur - pos)) or '', 12, SW - 36, y + 12, T.label2, F.num, 1)
+      y = y + 54
+    else
+      text('Not playing', 22, 36, y, T.white, F.b)
+      textBox('Start Spotify, YouTube, Apple Music or any Windows player. The play button below also resumes your last player.', 14, 36, y + 34, SW - 36, y + 80, T.label2)
+      y = y + 100
+    end
+    MEDIA.controls('mu.', SW / 2, y + 10, 34, T.white)
+    y = y + 70
+    if MEDIA.button('mu.vd', 'VOLUME_LOW', 60, y, 20, T.label2) then MEDIA.volDown() end
+    rect(90, y - 2, SW - 90, y + 2, rgbm(1, 1, 1, 0.18), 2)
+    if MEDIA.button('mu.vu', 'VOLUME_HIGH', SW - 60, y, 20, T.label2) then MEDIA.volUp() end
+    navBar('', {})
+  end
+  return scr
+end
+
+local function personalizeHome()
+  local scr = { title = 'Home Screen' }
+  function scr.draw()
+    bgFill()
+    local s = scrollBegin('phome', 94, BOTTOM)
+    local y = 104
+    local list = {}
+    for _, a in ipairs(APPMOD.APPS) do if a.id ~= 'settings' then list[#list + 1] = a end end
+    W.groupBg(y, #list)
+    for i, a in ipairs(list) do
+      local shown = not listHas(S.hiddenApps, a.id)
+      local v = W.toggleRow('ph' .. a.id, a.name, shown, y, { icon = a.icon, iconBg = a.c2, first = i == 1, last = i == #list })
+      if v ~= shown then S.hiddenApps = listToggle(S.hiddenApps, a.id) end
+      y = y + 46
+    end
+    y = W.sectionFooter('Hidden apps stay available from Control Centre, Settings and search.', y)
+    scrollEnd(s, y + 20)
+    navBar('Home Screen', { back = 'Personalize' })
+  end
+  return scr
+end
+
 function APPMOD.Themes.root()
-  local scr = { title = 'Themes' }
+  local scr = { title = 'Personalize' }
   function scr.draw()
     bgFill()
     local s = scrollBegin('themes', 50, BOTTOM)
-    local y = largeTitle('Themes', 96, s.y)
-    W.groupBg(y, 1)
-    local v = W.toggleRow('th.thick', 'Thick UI', S.thick, y, { first = true, last = true, icon = '🅱️', iconBg = accent() })
-    if v ~= S.thick then S.thick = v buildFonts() end
-    y = W.sectionFooter('Heavier fonts, outlined cards and bolder icons.', y + 46)
-    local cols, gap = 2, 12
-    local cw = (SW - 32 - gap) / cols
-    local ch = cw * 1.45
-    for i, th in ipairs(THEMES) do
-      local c, r = (i - 1) % cols, math.floor((i - 1) / cols)
-      local x, yy = 16 + c * (cw + gap), y + r * (ch + 54)
-      local fired, pressed = tap('theme' .. i, x, yy, x + cw, yy + ch + 44)
-      local sel = S.theme == i
-      -- mini phone
-      rect(x - 3, yy - 3, x + cw + 3, yy + ch + 3, sel and th.accent or rgbm(0.2, 0.2, 0.22, 1), 20)
-      ui.drawRectFilledMultiColor(P(x, yy), P(x + cw, yy + ch), A(th.top), A(th.top), A(th.bottom), A(th.bottom))
-      rect(x + cw / 2 - 22, yy + 8, x + cw / 2 + 22, yy + 20, rgbm(0, 0, 0, 1), 6)
-      if th.motif then
-        local oldA = D.a
-        D.a = D.a * 0.9
-        text(th.motif, 44, x + cw / 2, yy + ch * 0.28, T.white, F.r, 0.5)
-        D.a = oldA
-      else
-        circle(x + cw / 2, yy + ch * 0.38, 26, rgbm(1, 1, 1, 0.08))
-      end
-      -- tiny icons + a bubble in theme colours
-      for k = 0, 3 do
-        local ix = x + 12 + k * ((cw - 24 - 22) / 3)
-        rect(ix, yy + ch * 0.62, ix + 22, yy + ch * 0.62 + 22, mix(th.cell, th.accent, 0.3), 6)
-      end
-      rect(x + 12, yy + ch - 34, x + cw - 30, yy + ch - 14, th.accent, 10)
-      rect(x, yy + ch - 6, x + cw, yy + ch, th.accent2, 0)
-      if sel then
-        circle(x + cw - 16, yy + 18, 11, th.accent)
-        text('✓', 13, x + cw - 16, yy + 9, T.white, F.b, 0.5)
-      end
-      if pressed then rect(x, yy, x + cw, yy + ch, rgbm(1, 1, 1, 0.1), 18) end
-      text(th.name, 15, x + 4, yy + ch + 8, T.label, F.b)
-      textFit(th.tag, 12, x + 4, yy + ch + 28, cw - 8, T.label2)
-      if fired then
-        applyTheme(i)
-        toast('Theme applied', th.name, th.motif or '✨')
+    local y = largeTitle('Personalize', 96, s.y)
+    -- live preview of the current look
+    local pw, ph = 150, 300
+    local px = SW / 2 - pw / 2
+    rect(px - 5, y - 5, px + pw + 5, y + ph + 5, rgbm(0.2, 0.2, 0.22, 1), 30)
+    local wp = WALL.path()
+    local th = THEME or THEMES[1]
+    if not (wp and WALL.cover(wp, px, y, px + pw, y + ph, 26)) then
+      rect(px, y, px + pw, y + ph, th.bottom, 26)
+      ui.drawRectFilledMultiColor(P(px, y + 26), P(px + pw, y + ph - 26), A(th.top), A(th.top), A(th.bottom), A(th.bottom))
+    elseif S.wallDim > 0 then
+      rect(px, y, px + pw, y + ph, rgbm(0, 0, 0, S.wallDim), 26)
+    end
+    rect(px + pw / 2 - 22, y + 8, px + pw / 2 + 22, y + 20, rgbm(0, 0, 0, 1), 6)
+    text(os.date('%H:%M'), 30, px + pw / 2, y + 40, T.white, F.numl, 0.5)
+    for k = 0, 7 do
+      local ix = px + 16 + (k % 4) * 31
+      local iy = y + 120 + math.floor(k / 4) * 40
+      local a = APPMOD.APPS[k + 1]
+      if a then
+        if S.iconStyle == 2 then rect(ix, iy, ix + 24, iy + 24, rgbm(0.08, 0.08, 0.09, 0.62), 7)
+        elseif S.iconStyle == 3 then circle(ix + 12, iy + 12, 11, rgbm(1, 1, 1, 0.08))
+        else rect(ix, iy, ix + 24, iy + 24, a.c2, 7) end
+        local g = leadingIcon(a.icon)
+        if g then glyph(g, ix + 5, iy + 5, 14, S.iconStyle == 2 and mix(a.c1, T.white, 0.35) or T.white) end
       end
     end
-    y = y + math.ceil(#THEMES / cols) * (ch + 54) + 8
+    rect(px + 14, y + ph - 34, px + pw - 14, y + ph - 18, accent(), 8)
+    text('Aa  ' .. (FONT_FAMILIES[S.font] or FONT_FAMILIES[1]).name, 13, px + pw / 2, y + ph - 64, T.white, F.sb, 0.5)
+    y = y + ph + 24
+
+    -- themes strip
+    y = W.sectionHeader('Theme', y)
+    local cw, ch = 96, 150
+    local perRow = 3
+    local gap = (SW - 32 - cw * perRow) / (perRow - 1)
+    for i, t in ipairs(THEMES) do
+      local c, r = (i - 1) % perRow, math.floor((i - 1) / perRow)
+      local x, yy = 16 + c * (cw + gap), y + r * (ch + 36)
+      local fired, pressed = tap('theme' .. i, x, yy, x + cw, yy + ch + 26)
+      local sel = S.theme == i
+      rect(x - 3, yy - 3, x + cw + 3, yy + ch + 3, sel and t.accent or rgbm(0.18, 0.18, 0.2, 1), 18)
+      rect(x, yy, x + cw, yy + ch, t.bottom, 16)
+      ui.drawRectFilledMultiColor(P(x, yy + 16), P(x + cw, yy + ch - 16), A(t.top), A(t.top), A(t.bottom), A(t.bottom))
+      rect(x + 10, yy + ch - 30, x + cw - 10, yy + ch - 18, t.accent, 6)
+      rect(x + 10, yy + ch - 50, x + cw * 0.6, yy + ch - 38, t.cell, 6)
+      if sel then circle(x + cw - 14, yy + 14, 9, t.accent) glyph('CONFIRM', x + cw - 20, yy + 8, 12, T.white) end
+      if pressed then rect(x, yy, x + cw, yy + ch, rgbm(1, 1, 1, 0.1), 16) end
+      textFit(t.name, 13, x + cw / 2, yy + ch + 6, cw, T.label, F.sb, 0.5)
+      if fired then applyTheme(i) end
+    end
+    y = y + math.ceil(#THEMES / perRow) * (ch + 36) + 6
+
+    -- wallpaper
+    y = W.sectionHeader('Wallpaper', y)
+    local modes = { 'theme', 'car', 'track', 'custom' }
+    local labels = { 'Theme', 'My car', 'Track', 'Photo' }
+    local cur = 1
+    for i, m in ipairs(modes) do if S.wallMode == m then cur = i end end
+    local ni = W.segmented('wp.mode', labels, cur, 16, y, SW - 32)
+    if ni ~= cur then S.wallMode = modes[ni] end
+    y = y + 44
+    if S.wallMode == 'custom' then
+      local saved = WALL.saved()
+      local tw = (SW - 32 - 3 * 8) / 4
+      for i = 1, math.min(#saved, 7) do
+        local x = 16 + ((i - 1) % 4) * (tw + 8)
+        local yy = y + math.floor((i - 1) / 4) * (tw * 1.7 + 8)
+        if not WALL.cover(saved[i], x, yy, x + tw, yy + tw * 1.7, 10) then rect(x, yy, x + tw, yy + tw * 1.7, T.cell, 10) end
+        if saved[i] == S.wallPath then rectLine(x, yy, x + tw, yy + tw * 1.7, accent(), 10, 3) end
+        if tap('wps' .. i, x, yy, x + tw, yy + tw * 1.7) then S.wallPath = saved[i] end
+      end
+      local n = math.min(#saved, 7)
+      local x = 16 + (n % 4) * (tw + 8)
+      local yy = y + math.floor(n / 4) * (tw * 1.7 + 8)
+      local fired, pressed = tap('wp.add', x, yy, x + tw, yy + tw * 1.7)
+      rect(x, yy, x + tw, yy + tw * 1.7, pressed and T.cellHi or T.cell, 10)
+      rectLine(x, yy, x + tw, yy + tw * 1.7, T.border or T.sep, 10, 1.5)
+      glyph('PLUS', x + tw / 2 - 12, yy + tw * 0.85 - 12, 24, accent())
+      if fired then WALL.import() end
+      y = y + (math.floor(n / 4) + 1) * (tw * 1.7 + 8) + 4
+      y = W.sectionFooter('Pick any image on your PC, 4K works great. It’s copied into the phone so it stays.', y)
+    elseif S.wallMode ~= 'theme' and not WALL.path() then
+      y = W.sectionFooter(S.wallMode == 'car' and 'This skin has no preview image yet. Content Manager can generate one.' or 'This track has no preview image.', y)
+    end
+    if S.wallMode ~= 'theme' then
+      rect(LIST.x, y + 4, LIST.x + LIST.w, y + 78, T.cell, 14)
+      local v, ch2 = W.sliderRow('wp.dim', 'Dim', S.wallDim * 100, 0, 80, '%d%%', y + 4, { last = true })
+      if ch2 then S.wallDim = v / 100 end
+      y = y + 92
+    end
+
+    -- type & icons
+    y = W.sectionHeader('Font', y + 4)
+    local fl = {}
+    for i, f in ipairs(FONT_FAMILIES) do fl[i] = f.name end
+    local nf = W.segmented('pf.font', fl, S.font or 1, 16, y, SW - 32)
+    if nf ~= S.font then S.font = nf buildFonts() end
+    y = y + 44
+    y = W.sectionHeader('App icons', y + 8)
+    S.iconStyle = W.segmented('pf.icons', { 'Colour', 'Glass', 'Minimal' }, S.iconStyle or 1, 16, y, SW - 32)
+    y = y + 52
+    W.groupBg(y, 3)
+    local v = W.toggleRow('th.thick', 'Bold text', S.thick, y, { first = true })
+    if v ~= S.thick then S.thick = v buildFonts() end
+    S.motifs = W.toggleRow('th.motif', 'Theme symbols', S.motifs, y + 46)
+    if W.row('th.home', 'Home Screen apps', y + 92, { chevron = true, last = true }) then navPush(personalizeHome()) end
+    y = y + 150
+
     y = W.sectionHeader('Accent colour', y)
     rect(LIST.x, y, LIST.x + LIST.w, y + 64, T.cell, 14)
-    local opts = { { 0, (THEME or THEMES[1]).accent, 'Theme' } }
+    local opts = { { 0, (THEME or THEMES[1]).accent } }
     for i, a in ipairs(ACCENTS) do opts[#opts + 1] = { i, a.c } end
     local step = (LIST.w - 20) / #opts
     for k, o in ipairs(opts) do
       local cx = LIST.x + 10 + step * (k - 0.5)
       if tap('tacc' .. k, cx - 22, y + 8, cx + 22, y + 56) then S.accent = o[1] end
       circle(cx, y + 32, 16, o[2])
-      if o[1] == 0 then text('T', 13, cx, y + 23, T.white, F.b, 0.5) end
+      if o[1] == 0 then text('T', 12, cx, y + 24, T.white, F.b, 0.5) end
       if S.accent == o[1] then circleLine(cx, y + 32, 21, o[2], 2.5) end
     end
     y = y + 84
+    y = W.sectionHeader('Action bar', y)
+    S.barStyle = W.segmented('pf.bar', { 'Pro', 'Minimal' }, S.barStyle or 1, 16, y, SW - 32)
+    y = y + 60
     scrollEnd(s, y + 20)
-    navBar('Themes', { large = true }, s.y)
+    navBar('Personalize', { large = true }, s.y)
   end
   return scr
 end
@@ -3858,21 +4392,45 @@ function APPMOD.CutUp.root()
     rect(16, y, SW - 16, y + 178, mix(T.cell, rgbm(1, 0.3, 0.1, 1), hot * 0.35), 22)
     rectLine(16, y, SW - 16, y + 178, A(ac1, 0.5 + hot * 0.5), 22, 2)
     if HESI.running then
-      text('🔥 RUN IN PROGRESS', 12, 34, y + 16, ac1, F.b)
-      text(HESI.fmt(HESI.run), 46, 34, y + 34, T.white, F.b)
-      text(string.format('x%.1f', HESI.mult), 30, SW - 34, y + 44, rgbm(1, 0.8, 0.2, 1), F.b, 1)
+      text('@BURN RUN IN PROGRESS', 12, 34, y + 14, ac1, F.b)
+      text(HESI.fmt(HESI.run), 46, 34, y + 30, T.white, F.numb)
+      if HESI.tier() ~= '' then text(HESI.tier(), 12, 36, y + 86, rgbm(1, 0.8, 0.25, 1), F.b) end
+      text(string.format('x%.1f', HESI.mult), 30, SW - 34, y + 40, rgbm(1, 0.8, 0.2, 1), F.numb, 1)
       rect(34, y + 104, SW - 34, y + 112, rgbm(1, 1, 1, 0.1), 4)
       rect(34, y + 104, 34 + (SW - 68) * clamp(HESI.combo / HESI.comboMax, 0, 1), y + 112, ac1, 4)
       text('Combo', 11, 34, y + 116, T.label2, F.m)
       textBox('Slow under 30 km/h for 3 seconds to BANK. Crash and the run is gone.', 12, 34, y + 136, SW - 34, y + 172, T.label2)
     else
-      text('🔥', 44, 56, y + 24, T.white, F.r, 0.5)
+      glyph('BURN', 32, y + 24, 44, ac1)
       text('Ready to run', 22, 92, y + 26, T.white, F.b)
       text('Go over ' .. HESI.startSpeed .. ' km/h to start', 13, 92, y + 56, T.label2)
       if HESI.lastBank > 0 then text('Last banked  ' .. HESI.fmt(HESI.lastBank), 14, 34, y + 104, rgbm(0.4, 1, 0.55, 1), F.sb) end
       textBox('Weave through traffic. Near misses, close calls, lane splits and oncoming passes stack your multiplier.', 12, 34, y + 128, SW - 34, y + 172, T.label2)
     end
     y = y + 192
+    local lr = HESI.lastRun
+    if lr and not HESI.running then
+      rect(16, y, SW - 16, y + 132, T.cell, 18)
+      if S.thick then rectLine(16, y, SW - 16, y + 132, T.border, 18, 1.5) end
+      text(lr.crashed and '@COLLISION LAST RUN · CRASHED' or (lr.pb and '@TROPHY LAST RUN · NEW PB' or '@CONFIRM LAST RUN · BANKED'), 11, 32, y + 14,
+        lr.crashed and T.red or (lr.pb and T.yellow or T.green), F.b)
+      text(HESI.fmt(lr.score), 30, 32, y + 32, T.white, F.numb)
+      text(lr.at, 12, SW - 32, y + 16, T.label2, F.num, 1)
+      local cells = {
+        { string.format('%d:%02d', math.floor(lr.time / 60), math.floor(lr.time % 60)), 'TIME' },
+        { tostring(math.floor(lr.top)), 'TOP KM/H' },
+        { string.format('x%.1f', lr.maxMult), 'BEST MULT' },
+        { tostring(lr.near + lr.close), 'NEAR/CLOSE' },
+        { tostring(lr.split), 'SPLITS' },
+      }
+      local cw = (SW - 64) / #cells
+      for i, c in ipairs(cells) do
+        local x = 32 + (i - 1) * cw
+        text(c[1], 17, x, y + 82, T.white, F.num)
+        text(c[2], 9, x, y + 106, T.label2, F.b)
+      end
+      y = y + 146
+    end
     -- stat tiles
     local tw = (SW - 32 - 24) / 3
     local stats = { { 'PERSONAL BEST', HESI.fmt(S.hesiPB) }, { 'SESSION BEST', HESI.fmt(HESI.sessionBest) }, { 'BANKED', HESI.fmt(S.hesiTotal) } }
@@ -3881,7 +4439,7 @@ function APPMOD.CutUp.root()
       rect(x, y, x + tw, y + 66, T.cell, 14)
       if S.thick then rectLine(x, y, x + tw, y + 66, T.border, 14, 1.5) end
       text(st[1], 9, x + 10, y + 10, T.label2, F.b)
-      textFit(st[2], 18, x + 10, y + 30, tw - 20, T.white, F.b)
+      textFit(st[2], 19, x + 10, y + 30, tw - 20, T.white, F.numb)
     end
     y = y + 82
     tab = W.segmented('cu.tab', { 'Live', 'Session', 'All-time' }, tab, 16, y, SW - 32)
@@ -3898,7 +4456,7 @@ function APPMOD.CutUp.root()
       textFit(r.name .. (r.me and '  (you)' or ''), 15, LIST.x + 88, yy + 9, LIST.w - 200, T.label, F.sb)
       local sub = tab == 1 and (r.running and string.format('🔥 running · x%.1f', r.mult or 1) or 'idle') or (tab == 2 and ('banked ' .. HESI.fmt(r.total or 0)) or 'personal best')
       textFit(sub, 12, LIST.x + 88, yy + 30, LIST.w - 200, r.running and ac1 or T.label2)
-      text(HESI.fmt(r.score), 16, LIST.x + LIST.w - 14, yy + 16, T.white, F.b, 1)
+      text(HESI.fmt(r.score), 17, LIST.x + LIST.w - 14, yy + 16, T.white, F.numb, 1)
       if i < #rows then line(LIST.x + 88, yy + 54, LIST.x + LIST.w, yy + 54, T.sep, 1) end
     end
     y = y + math.max(1, #rows) * 54 + 6
@@ -3935,27 +4493,29 @@ end
 -- ===========================================================================
 
 local APPS = {
-  { id = 'messages', name = 'Messages', icon = '💬', c1 = rgbm(0.35, 0.90, 0.40, 1), c2 = rgbm(0.10, 0.70, 0.25, 1), root = APPMOD.Messages.root, badge = totalUnread },
-  { id = 'friends',  name = 'Friends',  icon = '👥', c1 = rgbm(0.30, 0.65, 1.00, 1), c2 = rgbm(0.05, 0.40, 0.95, 1), root = APPMOD.Friends.root },
-  { id = 'camera',   name = 'Camera',   icon = '📷', c1 = rgbm(0.62, 0.62, 0.66, 1), c2 = rgbm(0.35, 0.35, 0.38, 1), root = APPMOD.Camera.root },
-  { id = 'walk',     name = 'Walk',     icon = '🚶', c1 = rgbm(1.00, 0.70, 0.25, 1), c2 = rgbm(0.95, 0.45, 0.05, 1), root = APPMOD.Walk.root },
-  { id = 'video',    name = 'Video',    icon = '🎬', c1 = rgbm(1.00, 0.40, 0.40, 1), c2 = rgbm(0.85, 0.12, 0.18, 1), root = APPMOD.Video.root },
-  { id = 'chase',    name = 'Chase Cam', icon = '🏎️', c1 = rgbm(0.70, 0.45, 1.00, 1), c2 = rgbm(0.45, 0.20, 0.85, 1), root = APPMOD.Chase.root },
-  { id = 'plates',   name = 'Plates',   icon = '🏷️', c1 = rgbm(1.00, 0.88, 0.35, 1), c2 = rgbm(0.95, 0.65, 0.05, 1), root = APPMOD.Plates.root },
-  { id = 'skins',    name = 'Skins',    icon = '🎨', c1 = rgbm(1.00, 0.45, 0.70, 1), c2 = rgbm(0.90, 0.15, 0.45, 1), root = APPMOD.Skins.root },
-  { id = 'maps',     name = 'Maps',     icon = '🗺️', c1 = rgbm(0.40, 0.85, 0.55, 1), c2 = rgbm(0.10, 0.55, 0.85, 1), root = APPMOD.Maps.root },
-  { id = 'hud',      name = 'HUD',      icon = '🎛️', c1 = rgbm(0.35, 0.35, 0.40, 1), c2 = rgbm(0.10, 0.10, 0.12, 1), root = APPMOD.Hud.root },
-  { id = 'livery',   name = 'Livery',   icon = '🖌️', c1 = rgbm(1.00, 0.55, 0.30, 1), c2 = rgbm(0.85, 0.20, 0.50, 1), root = APPMOD.Livery.root },
-  { id = 'cutup',    name = 'Cut-Up',   icon = '🔥', c1 = rgbm(1.00, 0.55, 0.10, 1), c2 = rgbm(0.85, 0.10, 0.05, 1), root = APPMOD.CutUp.root },
-  { id = 'themes',   name = 'Themes',   icon = '✨', c1 = rgbm(0.95, 0.45, 0.95, 1), c2 = rgbm(0.40, 0.20, 0.85, 1), root = APPMOD.Themes.root },
-  { id = 'weather',  name = 'Weather',  icon = '⛅', c1 = rgbm(0.45, 0.75, 1.00, 1), c2 = rgbm(0.15, 0.45, 0.90, 1), root = APPMOD.Weather.root },
-  { id = 'library',  name = 'Apps',     icon = '🧩', c1 = rgbm(0.45, 0.50, 1.00, 1), c2 = rgbm(0.25, 0.25, 0.80, 1), root = APPMOD.Library.root },
-  { id = 'settings', name = 'Settings', icon = '⚙️', c1 = rgbm(0.60, 0.60, 0.64, 1), c2 = rgbm(0.36, 0.36, 0.40, 1), root = APPMOD.Settings.root, badge = function() return (UPD.latest and tonumber(UPD.latest.build) and tonumber(UPD.latest.build) > BUILD and UPD.state ~= 'ready') and 1 or 0 end },
+  { id = 'messages', name = 'Messages', icon = '@CHAT', c1 = rgbm(0.35, 0.90, 0.40, 1), c2 = rgbm(0.10, 0.70, 0.25, 1), root = APPMOD.Messages.root, badge = totalUnread },
+  { id = 'friends',  name = 'Friends',  icon = '@GROUP', c1 = rgbm(0.30, 0.65, 1.00, 1), c2 = rgbm(0.05, 0.40, 0.95, 1), root = APPMOD.Friends.root },
+  { id = 'camera',   name = 'Camera',   icon = '@CAMERA', c1 = rgbm(0.62, 0.62, 0.66, 1), c2 = rgbm(0.35, 0.35, 0.38, 1), root = APPMOD.Camera.root },
+  { id = 'walk',     name = 'Walk',     icon = '@PERSON', c1 = rgbm(1.00, 0.70, 0.25, 1), c2 = rgbm(0.95, 0.45, 0.05, 1), root = APPMOD.Walk.root },
+  { id = 'video',    name = 'Video',    icon = '@CLAPPERBOARD', c1 = rgbm(1.00, 0.40, 0.40, 1), c2 = rgbm(0.85, 0.12, 0.18, 1), root = APPMOD.Video.root },
+  { id = 'chase',    name = 'Chase Cam', icon = '@CAR_FRONT', c1 = rgbm(0.70, 0.45, 1.00, 1), c2 = rgbm(0.45, 0.20, 0.85, 1), root = APPMOD.Chase.root },
+  { id = 'plates',   name = 'Plates',   icon = '@TAG', c1 = rgbm(1.00, 0.88, 0.35, 1), c2 = rgbm(0.95, 0.65, 0.05, 1), root = APPMOD.Plates.root },
+  { id = 'skins',    name = 'Skins',    icon = '@PHOTOGRAPH', c1 = rgbm(1.00, 0.45, 0.70, 1), c2 = rgbm(0.90, 0.15, 0.45, 1), root = APPMOD.Skins.root },
+  { id = 'maps',     name = 'Maps',     icon = '@MAP', c1 = rgbm(0.40, 0.85, 0.55, 1), c2 = rgbm(0.10, 0.55, 0.85, 1), root = APPMOD.Maps.root },
+  { id = 'hud',      name = 'HUD',      icon = '@SPEEDOMETER', c1 = rgbm(0.35, 0.35, 0.40, 1), c2 = rgbm(0.10, 0.10, 0.12, 1), root = APPMOD.Hud.root },
+  { id = 'livery',   name = 'Livery',   icon = '@PALETTE', c1 = rgbm(1.00, 0.55, 0.30, 1), c2 = rgbm(0.85, 0.20, 0.50, 1), root = APPMOD.Livery.root },
+  { id = 'cutup',    name = 'Cut-Up',   icon = '@BURN', c1 = rgbm(1.00, 0.55, 0.10, 1), c2 = rgbm(0.85, 0.10, 0.05, 1), root = APPMOD.CutUp.root },
+  { id = 'themes',   name = 'Personalize',   icon = '@SLIDERS', c1 = rgbm(0.95, 0.45, 0.95, 1), c2 = rgbm(0.40, 0.20, 0.85, 1), root = APPMOD.Themes.root },
+  { id = 'music',    name = 'Music',    icon = '@MUSIC', c1 = rgbm(1.00, 0.36, 0.45, 1), c2 = rgbm(0.86, 0.10, 0.30, 1), root = APPMOD.Music.root },
+  { id = 'weather',  name = 'Weather',  icon = '@WEATHER_FEW_CLOUDS', c1 = rgbm(0.45, 0.75, 1.00, 1), c2 = rgbm(0.15, 0.45, 0.90, 1), root = APPMOD.Weather.root },
+  { id = 'library',  name = 'Apps',     icon = '@APPS', c1 = rgbm(0.45, 0.50, 1.00, 1), c2 = rgbm(0.25, 0.25, 0.80, 1), root = APPMOD.Library.root },
+  { id = 'settings', name = 'Settings', icon = '@SETTINGS', c1 = rgbm(0.60, 0.60, 0.64, 1), c2 = rgbm(0.36, 0.36, 0.40, 1), root = APPMOD.Settings.root, badge = function() return (UPD.latest and tonumber(UPD.latest.build) and tonumber(UPD.latest.build) > BUILD and UPD.state ~= 'ready') and 1 or 0 end },
 }
 local APP_BY_ID = {}
+APPMOD.APPS = APPS
 for _, a in ipairs(APPS) do APP_BY_ID[a.id] = a end
-local DOCK = { 'messages', 'friends', 'camera', 'settings' }
-local GRID = { 'cutup', 'maps', 'walk', 'video', 'chase', 'livery', 'plates', 'skins', 'hud', 'weather', 'themes', 'library' }
+local DOCK = { 'messages', 'music', 'camera', 'settings' }
+local GRID = { 'cutup', 'maps', 'friends', 'walk', 'video', 'chase', 'livery', 'skins', 'plates', 'hud', 'weather', 'themes', 'library' }
 
 local appIconRects = {}   -- id -> {x, y, size} for open/close zoom
 
@@ -4024,6 +4584,7 @@ do
 end
 
 local function motifScatter(motif, falling)
+  if not S.motifs or not motif then return end
   local t = clock()
   for _, p in ipairs(SCATTER) do
     local y = p.y * SH
@@ -4039,10 +4600,35 @@ end
 
 local function wallpaper()
   local th = THEME or THEMES[1]
+  local wp = WALL.path()
+  if wp and WALL.cover(wp, 0, 0, SW, SH, SCREEN.r) then
+    if S.wallDim > 0 then rect(0, 0, SW, SH, rgbm(0, 0, 0, S.wallDim), SCREEN.r) end
+    ui.drawRectFilledMultiColor(P(0, SH * 0.55), P(SW, SH), A(rgbm(0, 0, 0, 0)), A(rgbm(0, 0, 0, 0)), A(rgbm(0, 0, 0, 0.55)), A(rgbm(0, 0, 0, 0.55)))
+    return
+  end
   ui.drawRectFilledMultiColor(P(0, 0), P(SW, SH), A(th.top), A(th.top), A(th.bottom), A(th.bottom))
   local art, ac1, ac2 = th.art, th.accent, th.accent2
   local t = clock()
-  if art == 'glow' then
+  if art == 'graphite' then
+    ui.drawRectFilledMultiColor(P(0, 0), P(SW, SH * 0.5), A(rgbm(1, 1, 1, 0.06)), A(rgbm(1, 1, 1, 0.0)), A(rgbm(1, 1, 1, 0)), A(rgbm(1, 1, 1, 0.02)))
+    for i = 0, 6 do line(-40 + i * 70, SH, 160 + i * 70, 0, rgbm(1, 1, 1, 0.025), 1) end
+  elseif art == 'aurora' then
+    local bands = { { 0.30, 0.95, 0.75 }, { 0.20, 0.55, 1.0 }, { 0.65, 0.40, 1.0 } }
+    for k, c in ipairs(bands) do
+      for i = 0, 9 do
+        local x = SW * (i / 9)
+        local y = SH * (0.22 + k * 0.07) + math.sin(t * 0.25 + i * 0.7 + k) * 26
+        circle(x, y, 70, rgbm(c[1], c[2], c[3], 0.045))
+      end
+    end
+  elseif art == 'carbon' then
+    for i = -20, 40 do
+      local x = i * 14
+      line(x, 0, x + SH * 0.5, SH, rgbm(1, 1, 1, 0.022), 1)
+      line(x + SH * 0.5, 0, x, SH, rgbm(1, 1, 1, 0.016), 1)
+    end
+    rect(0, SH * 0.62, SW, SH * 0.62 + 3, A(ac1, 0.8))
+  elseif art == 'glow' then
     circle(SW * 0.8, SH * 0.18, 140, rgbm(1, 1, 1, 0.05))
     circle(SW * 0.15, SH * 0.7, 180, rgbm(1, 1, 1, 0.03))
   elseif art == 'moon' then
@@ -4173,21 +4759,22 @@ local function islandExpanded(kind)
     if kind == 'lap' then
       local car = ac.getCar(0)
       text('LAP ' .. ((car.lapCount or 0) + 1), 12, x1 + 22, y1 + 46, T.label2, F.sb)
-      text(fmtLap(car.lapTimeMs), 26, x1 + 22, y1 + 62, T.white, F.sb)
+      text(fmtLap(car.lapTimeMs), 26, x1 + 22, y1 + 62, T.white, F.numb)
       text('Last ' .. fmtLap(car.previousLapTimeMs) .. '   Best ' .. fmtLap(LIVE.bestMs), 12, x1 + 22, y1 + 96, T.label2)
       text(math.floor(car.speedKmh) .. '', 30, x2 - 22, y1 + 50, T.white, F.b, 1)
       text('km/h · ' .. (car.gear == 0 and 'N' or (car.gear < 0 and 'R' or tostring(car.gear))) .. (car.racePosition and car.racePosition > 0 and ('  ·  P' .. car.racePosition) or ''), 12, x2 - 22, y1 + 90, T.label2, F.r, 1)
     elseif kind == 'music' then
-      local m = musicPlaying()
+      local m = MEDIA.now()
       if m then
-        rect(x1 + 20, y1 + 44, x1 + 76, y1 + 100, rgbm(1, 0.35, 0.5, 1), 12)
-        if m.hasCover then pcall(ui.drawImageRounded, m, P(x1 + 20, y1 + 44), P(x1 + 76, y1 + 100), A(T.white), nil, nil, 12) else text('♫', 26, x1 + 48, y1 + 54, T.white, F.r, 0.5) end
-        textFit(m.title, 16, x1 + 90, y1 + 50, x2 - x1 - 110, T.white, F.sb)
-        textFit(m.artist or '', 13, x1 + 90, y1 + 74, x2 - x1 - 110, T.label2)
+        MEDIA.cover(m, x1 + 20, y1 + 44, x1 + 70, y1 + 94, 10)
+        textFit(m.title, 15, x1 + 82, y1 + 46, x2 - x1 - 190, T.white, F.sb)
+        textFit(m.artist or '', 12, x1 + 82, y1 + 68, x2 - x1 - 190, T.label2)
+        MEDIA.controls('isl.m', x2 - 70, y1 + 70, 16, T.white)
+        LIVE.expanded = math.max(LIVE.expanded, 0.5)
       end
     elseif kind == 'hesi' then
       text('🔥 CUT-UP RUN', 12, x1 + 22, y1 + 46, rgbm(1, 0.75, 0.2, 1), F.b)
-      text(HESI.fmt(HESI.run), 28, x1 + 22, y1 + 62, T.white, F.b)
+      text(HESI.fmt(HESI.run), 28, x1 + 22, y1 + 62, T.white, F.numb)
       text(string.format('x%.1f', HESI.mult), 28, x2 - 22, y1 + 50, rgbm(1, 0.75, 0.2, 1), F.b, 1)
       rect(x1 + 22, y1 + 100, x2 - 22, y1 + 105, rgbm(1, 1, 1, 0.15), 3)
       rect(x1 + 22, y1 + 100, x1 + 22 + (x2 - x1 - 44) * clamp(HESI.combo / HESI.comboMax, 0, 1), y1 + 105, rgbm(1, 0.75, 0.2, 1), 3)
@@ -4253,20 +4840,21 @@ local function notifCard(n, y, idp)
   return fired
 end
 
-local function nowPlayingCard(y)
-  local m = musicPlaying()
+local function nowPlayingCard(y, idp)
+  local m = MEDIA.now()
   if not m then return y end
-  rect(12, y, SW - 12, y + 76, rgbm(0.18, 0.18, 0.2, 0.88), 20)
-  rect(24, y + 12, 76, y + 64, rgbm(1, 0.35, 0.5, 1), 10)
-  if m.hasCover then pcall(ui.drawImageRounded, m, P(24, y + 12), P(76, y + 64), A(T.white), nil, nil, 10) else text('♫', 24, 50, y + 22, T.white, F.r, 0.5) end
-  textFit(m.title, 15, 88, y + 14, SW - 120, T.white, F.sb)
-  textFit(m.artist or '', 13, 88, y + 36, SW - 120, T.label2)
+  idp = idp or 'np'
+  rect(12, y, SW - 12, y + 128, rgbm(0.14, 0.14, 0.16, 0.86), 22)
+  MEDIA.cover(m, 26, y + 14, 82, y + 70, 10)
+  textFit(m.title, 15, 94, y + 18, SW - 130, T.white, F.sb)
+  textFit(m.artist or '', 13, 94, y + 40, SW - 130, T.label2)
   if m.trackDuration and m.trackDuration > 0 and m.trackPosition and m.trackPosition >= 0 then
     local t = clamp(m.trackPosition / m.trackDuration, 0, 1)
-    rect(88, y + 60, SW - 30, y + 63, rgbm(1, 1, 1, 0.2), 2)
-    rect(88, y + 60, 88 + (SW - 118) * t, y + 63, T.white, 2)
+    rect(26, y + 82, SW - 26, y + 85, rgbm(1, 1, 1, 0.2), 2)
+    rect(26, y + 82, 26 + (SW - 52) * t, y + 85, T.white, 2)
   end
-  return y + 86
+  MEDIA.controls(idp, SW / 2, y + 106, 20, T.white)
+  return y + 138
 end
 
 local function lapCard(y)
@@ -4274,7 +4862,7 @@ local function lapCard(y)
   local car = ac.getCar(0)
   rect(12, y, SW - 12, y + 84, rgbm(0.18, 0.18, 0.2, 0.88), 20)
   text('⏱  LIVE LAP ' .. ((car.lapCount or 0) + 1), 12, 28, y + 12, T.label2, F.sb)
-  text(fmtLap(car.lapTimeMs), 28, 28, y + 30, T.white, F.sb)
+  text(fmtLap(car.lapTimeMs), 28, 28, y + 30, T.white, F.numb)
   text(math.floor(car.speedKmh) .. ' km/h', 15, SW - 28, y + 38, T.white, F.m, 1)
   if LIVE.bestMs > 0 then
     local d = car.performanceMeter or 0
@@ -4290,10 +4878,10 @@ local function lockScreen()
   D.y = D.y - u * SH
   text('🔒', 16, SW / 2, 58, T.white, F.r, 0.5)
   text(os.date('%A, %d %B'), 17, SW / 2, 86, rgbm(1, 1, 1, 0.85), F.m, 0.5)
-  text(os.date('%H:%M'), 84, SW / 2, 104, T.white, F.sb, 0.5)
+  text(os.date('%H:%M'), 88, SW / 2, 100, T.white, F.numl, 0.5)
   local y = 230
   y = lapCard(y)
-  y = nowPlayingCard(y)
+  y = nowPlayingCard(y, 'lk')
   local shown = 0
   for i = #NOTIFS, 1, -1 do
     if y > SH - 140 then break end
@@ -4327,7 +4915,7 @@ local function notificationCenter(e)
   rect(0, 0, SW, SH, rgbm(0.02, 0.02, 0.04, 0.88 * e), SCREEN.r)
   local oldY = D.y
   D.y = D.y - (1 - e) * SH * 0.4
-  text(os.date('%H:%M'), 60, SW / 2, 62, T.white, F.sb, 0.5)
+  text(os.date('%H:%M'), 62, SW / 2, 60, T.white, F.numl, 0.5)
   text(os.date('%A, %d %B'), 15, SW / 2, 140, rgbm(1, 1, 1, 0.8), F.m, 0.5)
   text('Notification Centre', 20, 16, 176, T.white, F.b)
   if #NOTIFS > 0 and W.button('nc.clear', 'Clear', SW - 80, 172, 64, 30, 'gray') then
@@ -4336,7 +4924,7 @@ local function notificationCenter(e)
   local s = scrollBegin('nc', 214, SH - 40)
   local y = 220
   y = lapCard(y)
-  y = nowPlayingCard(y)
+  y = nowPlayingCard(y, 'ncm')
   if #NOTIFS == 0 then text('No notifications', 15, SW / 2, y + 30, T.label2, F.r, 0.5) y = y + 80 end
   for i = #NOTIFS, 1, -1 do
     local n = NOTIFS[i]
@@ -4387,16 +4975,17 @@ local function controlCenter(e)
   -- now playing block
   local mx = x0 + cw * 2 + g * 2
   rect(mx, y, mx + cw * 2 + g, y + cw * 2 + g, rgbm(0.25, 0.25, 0.28, 0.9), 22)
-  local m = musicPlaying()
+  local m = MEDIA.now()
+  local bw2 = cw * 2 + g
   if m then
-    rect(mx + 14, y + 14, mx + 58, y + 58, rgbm(1, 0.35, 0.5, 1), 10)
-    if m.hasCover then pcall(ui.drawImageRounded, m, P(mx + 14, y + 14), P(mx + 58, y + 58), A(T.white), nil, nil, 10) else text('♫', 20, mx + 36, y + 22, T.white, F.r, 0.5) end
-    textFit(m.title, 13, mx + 14, y + 68, cw * 2 - 18, T.white, F.sb)
-    textFit(m.artist or '', 12, mx + 14, y + 88, cw * 2 - 18, T.label2)
+    MEDIA.cover(m, mx + 12, y + 12, mx + 48, y + 48, 8)
+    textFit(m.title, 12, mx + 56, y + 14, bw2 - 64, T.white, F.sb)
+    textFit(m.artist or '', 11, mx + 56, y + 32, bw2 - 64, T.label2)
   else
-    text('♫', 24, mx + cw + g / 2, y + 26, T.label2, F.r, 0.5)
-    text('Not playing', 13, mx + cw + g / 2, y + 74, T.label2, F.m, 0.5)
+    glyph('MUSIC', mx + 14, y + 16, 26, T.label2)
+    text('Not playing', 12, mx + 48, y + 22, T.label2, F.m)
   end
+  MEDIA.controls('cc.m', mx + bw2 / 2, y + bw2 - 36, 18, T.white)
   y = y + cw * 2 + g * 2
   -- quick tiles
   if ccTile('cc.clean', x0, y, cw, cw, #CAM.hiddenApps > 0, '🫥', 'Clean') then hideOtherApps(#CAM.hiddenApps == 0) end
@@ -4484,17 +5073,34 @@ local function appIconDraw(id, icon, label, x, y, c1, c2, badgeN, onTap, dot)
   local fired, pressed = tap('icon.' .. id, x - 6, y - 6, x + ICON + 6, y + ICON + 24)
   local p = anim('icon.' .. id .. '#p', pressed and 1 or 0, 25)
   local sh = p * 3
-  if THEME and THEME.icons == 'tint' then
-    -- themed icon: dark glossy tile with a glowing accent rim
-    c1, c2 = mix(THEME.cell, THEME.accent, 0.30), mix(THEME.bg, THEME.cell, 0.5)
-    rect(x - 2 + sh, y - 2 + sh, x + ICON + 2 - sh, y + ICON + 2 - sh, A(THEME.accent, 0.35), 17)
+  local style = S.iconStyle or 1
+  local x1, y1, x2, y2 = x + sh, y + sh, x + ICON - sh, y + ICON - sh
+  local g, rest = leadingIcon(icon)
+  local gc = T.white
+  if style == 2 then
+    -- glass: frosted dark tile, accent glyph
+    rect(x1, y1, x2, y2, rgbm(0.08, 0.08, 0.09, 0.62), 16)
+    ui.drawRectFilledMultiColor(P(x1 + 8, y1 + 1), P(x2 - 8, y1 + 2), A(rgbm(1, 1, 1, 0)), A(rgbm(1, 1, 1, 0)), A(rgbm(1, 1, 1, 0.35)), A(rgbm(1, 1, 1, 0.35)))
+    rectLine(x1, y1, x2, y2, rgbm(1, 1, 1, 0.14), 16, 1)
+    gc = mix(c1, T.white, 0.35)
+  elseif style == 3 then
+    -- minimal: just the glyph on a faint circle
+    circle(x + ICON / 2, y + ICON / 2, ICON / 2 - 4 - sh, rgbm(1, 1, 1, 0.08))
+    gc = T.white
+  else
+    -- colour: smooth two-tone gradient tile with a soft top sheen
+    rect(x1, y1, x2, y2, c2, 16)
+    rect(x1, y1, x2, y + ICON * 0.55, c1, 16, ui.CornerFlags.Top)
+    ui.drawRectFilledMultiColor(P(x1, y + ICON * 0.4), P(x2, y + ICON * 0.62), A(c1), A(c1), A(c2), A(c2))
+    rect(x1, y1, x2, y + ICON * 0.3, rgbm(1, 1, 1, 0.08), 16, ui.CornerFlags.Top)
   end
-  rect(x + sh, y + sh, x + ICON - sh, y + ICON - sh, c2, 15)
-  rect(x + sh, y + sh, x + ICON - sh, y + ICON * 0.55, c1, 15, ui.CornerFlags.Top)
-  rect(x + sh, y + ICON * 0.45, x + ICON - sh, y + ICON * 0.6, rgbm(lerp(c1.r, c2.r, 0.5), lerp(c1.g, c2.g, 0.5), lerp(c1.b, c2.b, 0.5), 1), 0)
-  if S.thick then rectLine(x + sh, y + sh, x + ICON - sh, y + ICON - sh, rgbm(1, 1, 1, 0.12), 15, 1.5) end
-  if p > 0.01 then rect(x, y, x + ICON, y + ICON, rgbm(0, 0, 0, 0.25 * p), 15) end
-  text(icon, 30, x + ICON / 2, y + 10, T.white, F.r, 0.5)
+  if p > 0.01 then rect(x, y, x + ICON, y + ICON, rgbm(0, 0, 0, 0.25 * p), 16) end
+  if g then
+    local gs = ICON * 0.46
+    glyph(g, x + (ICON - gs) / 2, y + (ICON - gs) / 2, gs, gc)
+  else
+    text(icon, 28, x + ICON / 2, y + 11, T.white, F.sb, 0.5)
+  end
   if label then textFit(label, 12, x + ICON / 2, y + ICON + 5, ICON + 18, T.white, F.m, 0.5) end
   if badgeN and badgeN > 0 then
     local s = badgeN > 99 and '99+' or tostring(badgeN)
@@ -4511,8 +5117,8 @@ local function widgetFriends(x, y, w, h)
   rect(x, y, x + w, y + h, rgbm(0.10, 0.10, 0.12, 0.72), 22)
   local players = getPlayers()
   text('👥 Friends', 13, x + 14, y + 12, T.label2, F.sb)
-  text(tostring(#players), 40, x + 14, y + 30, T.white, F.l)
-  text(#players == 1 and 'online' or 'online', 13, x + 14 + measure(tostring(#players), 40, F.l).x + 6, y + 56, T.label2, F.r)
+  text(tostring(#players), 40, x + 14, y + 26, T.white, F.numl)
+  text('online', 13, x + 14 + measure(tostring(#players), 40, F.numl).x + 6, y + 52, T.label2, F.r)
   for i = 1, math.min(4, #players) do
     avatar(players[i].name, x + 14 + (i - 1) * 24, y + h - 46, 32)
   end
@@ -4527,7 +5133,7 @@ local function widgetWeather(x, y, w, h)
   rect(x, y, x + w, y + h * 0.5, top, 22, ui.CornerFlags.Top)
   rect(x, y + h * 0.35, x + w, y + h * 0.55, rgbm(lerp(top.r, bottom.r, 0.5), lerp(top.g, bottom.g, 0.5), lerp(top.b, bottom.b, 0.5), 1), 0)
   textFit(ac.getTrackName and ac.getTrackName() or 'Track', 13, x + 14, y + 12, w - 28, T.white, F.sb)
-  text(string.format('%d°', math.floor(wt.temp + 0.5)), 40, x + 14, y + 28, T.white, F.l)
+  text(string.format('%d°', math.floor(wt.temp + 0.5)), 40, x + 14, y + 26, T.white, F.numl)
   text(wt.icon, 18, x + 14, y + h - 52, T.white, F.r)
   textFit(wt.name, 12, x + 14, y + h - 28, w - 28, T.white, F.m)
   text(wt.timeStr, 12, x + w - 14, y + 14, rgbm(1, 1, 1, 0.8), F.m, 1)
@@ -4538,14 +5144,18 @@ local function homePage1(ox)
   local oldX = D.x
   D.x = D.x + ox
   local ww = ICON * 2 + GAPX
-  widgetFriends(24, 66, ww, 150)
-  widgetWeather(24 + ww + GAPX, 66, ww, 150)
-  local y0 = 240
-  for i, id in ipairs(GRID) do
+  widgetFriends(24, 62, ww, 132)
+  widgetWeather(24 + ww + GAPX, 62, ww, 132)
+  local y0 = 212
+  local n = 0
+  for _, id in ipairs(GRID) do
     local a = APP_BY_ID[id]
-    local c, r = (i - 1) % COLS, math.floor((i - 1) / COLS)
-    local x, y = 24 + c * (ICON + GAPX), y0 + r * 100
-    appIconDraw(id, a.icon, a.name, x, y, a.c1, a.c2, a.badge and a.badge() or 0, function() openApp(id) end)
+    if not listHas(S.hiddenApps, id) then
+      n = n + 1
+      local c, r = (n - 1) % COLS, math.floor((n - 1) / COLS)
+      local x, y = 24 + c * (ICON + GAPX), y0 + r * 92
+      appIconDraw(id, a.icon, a.name, x, y, a.c1, a.c2, a.badge and a.badge() or 0, function() openApp(id) end)
+    end
   end
   D.x = oldX
 end
@@ -4554,17 +5164,7 @@ local function homePage2(ox)
   local oldX = D.x
   D.x = D.x + ox
   local top0 = 70
-  local m = musicPlaying()
-  if m then
-    local x1, x2 = 24, SW - 24
-    rect(x1, 64, x2, 150, rgbm(0.10, 0.10, 0.12, 0.72), 22)
-    rect(x1 + 14, 78, x1 + 72, 136, rgbm(1, 0.35, 0.5, 1), 12)
-    if m.hasCover then pcall(ui.drawImageRounded, m, P(x1 + 14, 78), P(x1 + 72, 136), A(T.white), nil, nil, 12) else text('♫', 26, x1 + 43, 88, T.white, F.r, 0.5) end
-    text('NOW PLAYING', 11, x1 + 86, 82, rgbm(1, 0.45, 0.6, 1), F.sb)
-    textFit(m.title, 16, x1 + 86, 98, x2 - x1 - 100, T.white, F.sb)
-    textFit(m.artist or '', 13, x1 + 86, 120, x2 - x1 - 100, T.label2)
-    top0 = 170
-  end
+  if MEDIA.now() then top0 = nowPlayingCard(58, 'hm') + 6 end
   local pinned = splitList(S.pinnedApps)
   local wins = {}
   if ac.getAppWindows then for _, w in ipairs(ac.getAppWindows()) do wins[w.name] = w end end
@@ -4848,68 +5448,77 @@ end
 function script.actionBar(dt)
   D.x, D.y, D.a = 0, 0, 1
   local ws = ui.windowSize()
-  local Wd = ws.x
+  local cx = ws.x / 2
   local ac1 = accent()
-  local th = THEME or THEMES[1]
-  local cx = Wd / 2
-  -- event feed, rising above the bar
+  local gold = rgbm(1, 0.78, 0.22, 1)
+  local minimal = S.barStyle == 2
+  -- event feed: clean chips rising above the bar
   for i, f in ipairs(HESI.feed) do
-    local a = clamp(1 - (f.t - 2) / 1, 0, 1) * clamp(f.t * 6, 0, 1)
-    local y = 70 - (i - 1) * 24 - f.t * 6
-    if y > -10 then
-      local size = f.big and 20 or 15
+    local a = clamp(1 - (f.t - 2) / 1, 0, 1) * clamp(f.t * 8, 0, 1)
+    local y = 72 - (i - 1) * 26 - f.t * 5
+    if y > -10 and a > 0.01 then
+      local size = f.big and 17 or 14
       local oldA = D.a
       D.a = a
-      local w = measure(f.text, size, F.b).x + 22
-      rect(cx - w / 2, y, cx + w / 2, y + size + 8, rgbm(0, 0, 0, 0.55), 10)
-      text(f.text, size, cx, y + 3, f.color, F.b, 0.5)
+      local w = measure(f.text, size, F.numb).x + 30
+      rect(cx - w / 2, y, cx + w / 2, y + size + 10, rgbm(0.03, 0.03, 0.04, 0.72), (size + 10) / 2)
+      rect(cx - w / 2 + 8, y + 7, cx - w / 2 + 11, y + size + 3, f.color, 2)
+      text(f.text, size, cx + 6, y + 4, T.white, F.numb, 0.5)
       D.a = oldA
     end
   end
-  local y0 = 96
+  local y0 = 100
   if HESI.running then
-    local hot = clamp(HESI.mult / 10, 0, 1)
-    local bw = 460
+    local hot = clamp(HESI.mult / 12, 0, 1)
+    local bw = minimal and 300 or 480
+    local bh = minimal and 50 or 64
     local x1, x2 = cx - bw / 2, cx + bw / 2
-    rect(x1, y0, x2, y0 + 70, mix(rgbm(0.04, 0.04, 0.05, 0.9), th.cell, 0.5), 22)
-    rect(x1, y0, x2, y0 + 70, rgbm(1, 0.35, 0.05, 0.25 * hot), 22)
-    rectLine(x1, y0, x2, y0 + 70, A(ac1, 0.6 + 0.4 * hot), 22, 2.5)
-    -- multiplier ring with combo timer
-    local mc = vec2(x1 + 44, y0 + 35)
-    circle(mc.x, mc.y, 27, rgbm(0, 0, 0, 0.5))
+    -- glass bar
+    rect(x1, y0, x2, y0 + bh, rgbm(0.03, 0.03, 0.04, 0.78), bh / 2)
+    ui.drawRectFilledMultiColor(P(x1 + bh / 2, y0), P(x2 - bh / 2, y0 + 1.5), A(rgbm(1, 1, 1, 0)), A(rgbm(1, 1, 1, 0)), A(rgbm(1, 1, 1, 0.25)), A(rgbm(1, 1, 1, 0.25)))
+    rectLine(x1, y0, x2, y0 + bh, A(mix(ac1, gold, hot), 0.35 + hot * 0.5), bh / 2, 1.5)
+    -- combo timer underline
     local frac = clamp(HESI.combo / HESI.comboMax, 0, 1)
-    if frac > 0 then
-      ui.pathArcTo(P(mc.x, mc.y), 27, -math.pi / 2, -math.pi / 2 + math.pi * 2 * frac, 40)
-      ui.pathStroke(A(rgbm(1, 0.75, 0.2, 1)), false, 4)
+    rect(x1 + bh / 2, y0 + bh - 3, x1 + bh / 2 + (bw - bh) * frac, y0 + bh - 1, mix(ac1, gold, hot), 1)
+    if minimal then
+      text(HESI.fmt(HESI.run), 30, cx - 20, y0 + 7, T.white, F.numb, 0.5)
+      text(string.format('x%.1f', HESI.mult), 20, x2 - 22, y0 + 13, gold, F.numb, 1)
+    else
+      -- multiplier
+      text(string.format('x%.1f', HESI.mult), 26, x1 + 34, y0 + 14, gold, F.numb, 0)
+      local tier = HESI.tier()
+      if tier ~= '' then text(tier, 9, x1 + 36, y0 + 46, rgbm(1, 0.8, 0.3, 0.85), F.b) end
+      -- score
+      text(HESI.fmt(HESI.run), 38, cx, y0 + 8, T.white, F.numb, 0.5)
+      -- PB progress
+      if S.hesiPB > 0 then
+        local pbt = clamp(HESI.run / S.hesiPB, 0, 1)
+        rect(cx - 70, y0 + 52, cx + 70, y0 + 54, rgbm(1, 1, 1, 0.12), 1)
+        rect(cx - 70, y0 + 52, cx - 70 + 140 * pbt, y0 + 54, pbt >= 1 and T.green or rgbm(1, 1, 1, 0.6), 1)
+      end
+      -- speed
+      local car = ac.getCar(0)
+      text(tostring(math.floor(car and car.speedKmh or 0)), 26, x2 - 58, y0 + 12, T.white, F.numb, 1)
+      text('KM/H', 9, x2 - 30, y0 + 22, T.label2, F.b, 0.5)
     end
-    text(string.format('x%.1f', HESI.mult), 17, mc.x, mc.y - 12, rgbm(1, 0.85, 0.3, 1), F.b, 0.5)
-    -- score
-    text(HESI.fmt(HESI.run), 40, cx + 10, y0 + 8, T.white, F.b, 0.5)
-    -- right: speed and PB
-    local car = ac.getCar(0)
-    text(math.floor(car and car.speedKmh or 0) .. '', 22, x2 - 20, y0 + 10, T.white, F.b, 1)
-    text('KM/H', 10, x2 - 20, y0 + 38, T.label2, F.b, 1)
-    text('PB ' .. HESI.fmt(S.hesiPB), 10, x2 - 20, y0 + 52, ac1, F.b, 1)
     if HESI.slowT > 0.3 then
-      local w = 160
-      rect(cx - w / 2, y0 + 74, cx + w / 2, y0 + 96, rgbm(0.1, 0.6, 0.3, 0.9), 11)
-      text(string.format('BANKING IN %.1f', math.max(0, 3 - HESI.slowT)), 12, cx, y0 + 77, T.white, F.b, 0.5)
+      local w = 170
+      rect(cx - w / 2, y0 + bh + 6, cx + w / 2, y0 + bh + 28, rgbm(0.1, 0.55, 0.3, 0.92), 11)
+      text(string.format('BANKING  %.1f', math.max(0, 3 - HESI.slowT)), 12, cx, y0 + bh + 10, T.white, F.numb, 0.5)
     end
   else
-    local label = '🔥 CUT-UP  ·  PB ' .. HESI.fmt(S.hesiPB) .. '  ·  ' .. HESI.startSpeed .. '+ km/h to start'
-    if not S.hesiOn then label = '🔥 CUT-UP is off' end
-    local w = measure(label, 13, F.b).x + 30
-    rect(cx - w / 2, y0 + 30, cx + w / 2, y0 + 60, rgbm(0, 0, 0, 0.55), 15)
-    rectLine(cx - w / 2, y0 + 30, cx + w / 2, y0 + 60, A(ac1, 0.4), 15, 1.5)
-    text(label, 13, cx, y0 + 36, T.white, F.b, 0.5)
+    local label = S.hesiOn and ('@BURN  PB ' .. HESI.fmt(S.hesiPB) .. '   ·   ' .. HESI.startSpeed .. '+ KM/H TO START') or '@BURN  CUT-UP OFF'
+    local w = measure(label, 12, F.numb).x + 34
+    rect(cx - w / 2, y0 + 24, cx + w / 2, y0 + 52, rgbm(0.03, 0.03, 0.04, 0.6), 14)
+    text(label, 12, cx, y0 + 31, rgbm(1, 1, 1, 0.85), F.numb, 0.5)
   end
   if HESI.crashFlash > 0 then
     local oldA = D.a D.a = HESI.crashFlash
-    text('CRASHED', 34, cx, 20, T.red, F.b, 0.5)
+    text('CRASHED', 30, cx, 22, T.red, F.numb, 0.5)
     D.a = oldA
   elseif HESI.bankFlash > 0 then
     local oldA = D.a D.a = HESI.bankFlash
-    text('BANKED', 34, cx, 20, rgbm(0.3, 1, 0.5, 1), F.b, 0.5)
+    text('BANKED +' .. HESI.fmt(HESI.lastBank), 28, cx, 22, rgbm(0.35, 1, 0.55, 1), F.numb, 0.5)
     D.a = oldA
   end
 end

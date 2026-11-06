@@ -1,6 +1,14 @@
-# AC Phone v0.4
+# AC Phone v0.5
 
 An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everything is custom-drawn: no stock AC or ImGui boxes.
+
+## New in v0.5
+- **Sleek redesign:** CSP's monochrome icon set replaces emoji everywhere. Text uses Segoe UI Variable, and numbers use Bahnschrift.
+- **Personalize:** pick a theme (3 new sleek ones: Graphite, Aurora, Carbon), a wallpaper (theme art, your car's photo, the track, or any 4K image from your PC), a font (Modern, Classic or Sport), an app icon style (Colour, Glass or Minimal), bold text, theme symbols, accent colour, which apps show on the home screen, and the action bar style.
+- **Music:** new Music app with album art, progress and play/pause/next/previous/volume. Controls also appear on the lock screen, in Control Centre, in the Dynamic Island and on the home screen.
+- **Skins:** big preview of what you're wearing, search, favourites, a Random button, and a Friends tab.
+- **Livery:** Racing stripes, Diagonal, Split and Forged carbon patterns. Satin and Candy finishes. Saved looks, plus share codes you can copy and paste through chat.
+- **Cut-Up:** combo tiers (Heating Up, On Fire, Untouchable, God Mode), a last-run summary, and a redesigned action bar (Pro or Minimal) with a PB progress line.
 
 ## New in v0.4
 - **Cut-Up:** a No Hesi-style points system. Weave through traffic for Near Miss, Close Call, Overtake, Oncoming, Lane Split, Slipstream and Speed Trap points. Your multiplier goes up to x20. Slow down to bank your run; crash and you lose it. There's a live leaderboard with everyone on AC Phone (Live, Session and All-time).
