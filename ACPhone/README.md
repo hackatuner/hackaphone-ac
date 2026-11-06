@@ -1,6 +1,11 @@
-# AC Phone v0.6.2
+# AC Phone v0.7
 
 An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everything is custom-drawn: no stock AC or ImGui boxes.
+
+## New in v0.7
+- **Resize the phone:** drag the frame's right, left or bottom edge, or the bottom-right corner. It keeps its proportions, so nothing stretches or breaks, and text stays sharp at every size. There's also a size slider and S/M/L/XL presets in Personalize › Size.
+- **Move the phone:** right-click and drag anywhere on it, long-press the status bar, or drag the frame.
+- **Action bar size** slider in Personalize › Size.
 
 ## New in v0.6.2
 - **Album art wallpaper:** Personalize › Wallpaper › Music makes the cover of the current song your wallpaper. It cross-fades when the track changes, and you can blur it or keep it sharp.

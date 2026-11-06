@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '0.6.2'
-local BUILD = 8
+local VERSION = '0.7'
+local BUILD = 9
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -84,6 +84,8 @@ local S = ac.storage({
   wallMode = 'theme',
   wallPath = '',
   wallDim = 0.35,
+  phoneScale = 1.0,
+  barScale = 1.0,
   musicBlur = true,
   iconStyle = 1,
   barStyle = 1,
@@ -281,7 +283,36 @@ local function A(c, extra)
   return rgbm(c.r, c.g, c.b, c.mult * a)
 end
 
-local function P(x, y) return vec2(D.x + x, D.y + y) end
+-- Global scale: the whole phone is drawn in design units (352x756 screen) and scaled uniformly,
+-- so resizing never breaks the layout. Text and inputs are drawn unscaled at k-times size to stay sharp.
+local GS = { k = 1, active = false, raw = false, pivot = vec2(0, 0) }
+
+local function P(x, y)
+  if GS.raw then return vec2((D.x + x) * GS.k, (D.y + y) * GS.k) end
+  return vec2(D.x + x, D.y + y)
+end
+
+function GS.begin(k)
+  GS.k = k or 1
+  GS.active = math.abs(GS.k - 1) > 0.001
+  if GS.active then ui.beginScale() end
+end
+
+function GS.finish()
+  if GS.active then ui.endPivotScale(GS.k, GS.pivot) end
+  GS.active = false
+end
+
+-- run fn outside the vertex scaling, with P() returning final (scaled) positions
+function GS.unscaled(fn)
+  if not GS.active then return fn() end
+  ui.endPivotScale(GS.k, GS.pivot)
+  GS.raw = true
+  local ok, err = pcall(fn)
+  GS.raw = false
+  ui.beginScale()
+  if not ok then error(err, 0) end
+end
 
 local function rect(x1, y1, x2, y2, c, r, flags)
   ui.drawRectFilled(P(x1, y1), P(x2, y2), A(c), r or 0, flags)
@@ -382,16 +413,27 @@ local function text(s, size, x, y, c, font, align)
     x = x + gs + size * 0.4
     s = rest
   end
-  ui.pushDWriteFont(font.f)
-  ui.dwriteDrawText(s, size, P(x, y), A(c or T.label))
-  ui.popDWriteFont()
+  if GS.active then
+    GS.unscaled(function()
+      ui.pushDWriteFont(font.f)
+      ui.dwriteDrawText(s, size * GS.k, P(x, y), A(c or T.label))
+      ui.popDWriteFont()
+    end)
+  else
+    ui.pushDWriteFont(font.f)
+    ui.dwriteDrawText(s, size, P(x, y), A(c or T.label))
+    ui.popDWriteFont()
+  end
 end
 
 -- text inside a box, wrapped, top-left aligned
 local function textBox(s, size, x1, y1, x2, y2, c, font)
-  ui.pushDWriteFont((font or F.r).f)
-  ui.dwriteDrawTextClipped(tostring(s), size, P(x1, y1), P(x2, y2), ui.Alignment.Start, ui.Alignment.Start, true, A(c or T.label))
-  ui.popDWriteFont()
+  local function draw()
+    ui.pushDWriteFont((font or F.r).f)
+    ui.dwriteDrawTextClipped(tostring(s), size * (GS.raw and GS.k or 1), P(x1, y1), P(x2, y2), ui.Alignment.Start, ui.Alignment.Start, true, A(c or T.label))
+    ui.popDWriteFont()
+  end
+  if GS.active then GS.unscaled(draw) else draw() end
 end
 
 local function measureWrapped(s, size, width, font)
@@ -446,7 +488,7 @@ local clipStack = {}
 
 local function pushClip(x1, y1, x2, y2)
   local p1, p2 = P(x1, y1), P(x2, y2)
-  ui.pushClipRect(p1, p2, true)
+  ui.pushClipRect(p1 * GS.k, p2 * GS.k, true)
   local top = clipStack[#clipStack]
   if top then
     p1 = vec2(math.max(p1.x, top[1].x), math.max(p1.y, top[1].y))
@@ -633,14 +675,18 @@ function W.field(id, value, placeholder, x, y, w, h, opts)
     ui.pushStyleColor(ui.StyleColor.FrameBgActive, T.clear)
     ui.pushStyleColor(ui.StyleColor.Text, T.label)
     ui.pushStyleColor(ui.StyleColor.TextSelectedBg, rgbm(accent().r, accent().g, accent().b, 0.4))
-    ui.pushStyleVar(ui.StyleVar.FramePadding, vec2(0, (h - 16) / 2))
-    ui.pushStyleVar(ui.StyleVar.FrameBorderSize, 0)
-    ui.setCursor(P(x + pad, y))
-    ui.setNextItemWidth(w - pad - 8)
-    local newV, _, e = ui.inputText('##' .. id, value, opts.flags or 0)
-    if opts.focus then ui.setKeyboardFocusHere(-1) end
-    fieldState[id] = ui.itemActive()
-    ui.popStyleVar(2)
+    local newV, e
+    GS.unscaled(function()
+      ui.pushStyleVar(ui.StyleVar.FramePadding, vec2(0, math.max(0, (h * GS.k - 16) / 2)))
+      ui.pushStyleVar(ui.StyleVar.FrameBorderSize, 0)
+      ui.setCursor(P(x + pad, y))
+      ui.setNextItemWidth((w - pad - 8) * GS.k)
+      local _
+      newV, _, e = ui.inputText('##' .. id, value, opts.flags or 0)
+      if opts.focus then ui.setKeyboardFocusHere(-1) end
+      fieldState[id] = ui.itemActive()
+      ui.popStyleVar(2)
+    end)
     ui.popStyleColor(5)
     if newV ~= nil then value = newV end
     enter = e
@@ -2296,13 +2342,20 @@ local BOTTOM = SH - 34          -- above home indicator
 local PHONE = { minimized = false, minimizeReason = nil, locked = false }
 PHONE_STATE = PHONE
 
+PHONE.BASE, PHONE.CAP = vec2(372, 776), vec2(372, 96)
+
+-- keeps the window exactly the size of the phone at the current scale (so it can never be squashed)
+function PHONE.applySize()
+  local k = clamp(S.phoneScale or 1, 0.6, 1.8)
+  local size = (PHONE.minimized and PHONE.CAP or PHONE.BASE) * k
+  if ac.setWindowSizeConstraints then ac.setWindowSizeConstraints('main', size, size) end
+  PHONE.appliedScale, PHONE.appliedMin = k, PHONE.minimized
+end
+
 local function setMinimized(v, reason)
   PHONE.minimized = v
   PHONE.minimizeReason = v and reason or nil
-  if ac.setWindowSizeConstraints then
-    if v then ac.setWindowSizeConstraints('main', vec2(372, 96), vec2(372, 96))
-    else ac.setWindowSizeConstraints('main', vec2(372, 776), vec2(372, 776)) end
-  end
+  PHONE.applySize()
 end
 
 local function bgFill(c)
@@ -4369,6 +4422,22 @@ function APPMOD.Themes.root()
       y = y + 92
     end
 
+    -- size
+    y = W.sectionHeader('Size', y + 4)
+    rect(LIST.x, y, LIST.x + LIST.w, y + 148, T.cell, 14)
+    local pv, pch = W.sliderRow('pf.size', 'Phone size', (S.phoneScale or 1) * 100, 60, 180, '%d%%', y)
+    if pch then S.phoneScale = math.floor(pv + 0.5) / 100 end
+    local bv, bch = W.sliderRow('pf.bar', 'Action bar size', (S.barScale or 1) * 100, 50, 200, '%d%%', y + 74, { last = true })
+    if bch then S.barScale = math.floor(bv + 0.5) / 100 end
+    y = y + 156
+    local sizes = { { 'S', 0.8 }, { 'M', 1.0 }, { 'L', 1.25 }, { 'XL', 1.5 } }
+    local bw = (SW - 32 - 3 * 8) / 4
+    for i, sz in ipairs(sizes) do
+      if W.button('pf.sz' .. i, sz[1], 16 + (i - 1) * (bw + 8), y, bw, 36, math.abs((S.phoneScale or 1) - sz[2]) < 0.01 and 'filled' or 'gray') then S.phoneScale = sz[2] end
+    end
+    y = y + 44
+    y = W.sectionFooter('You can also drag the phone’s frame edge or bottom-right corner to resize. Right-click and drag anywhere (or long-press the status bar) to move it.', y)
+
     -- type & icons
     y = W.sectionHeader('Font', y + 4)
     local fl = {}
@@ -5446,13 +5515,11 @@ local function compose()
       local ix, iy = cx, cy
       if tr.icon then ix, iy = tr.icon.x - SCREEN.x, tr.icon.y - SCREEN.y end
       local oldX, oldY, oldA = D.x, D.y, D.a
-      D.x = D.x + (ix - cx) * (1 - e)
-      D.y = D.y + (iy - cy) * (1 - e)
-      D.a = D.a * clamp(e * 1.6, 0, 1)
-      ui.beginScale()
+      D.x = D.x + (ix - cx) * (1 - e) * 0.15
+      D.y = D.y + (iy - cy) * (1 - e) * 0.15 + 30 * (1 - e)
+      D.a = D.a * clamp(e * 1.4, 0, 1)
       scr.draw(scr)
       cornerMasks()
-      ui.endScale(lerp(0.12, 1, e))
       D.x, D.y, D.a = oldX, oldY, oldA
     end
     if tr.t >= dur then NAV.trans = nil end
@@ -5529,18 +5596,20 @@ local lastDraw = -1
 local openAnim = 1
 local swipeHome = nil
 
-local function readInput(dt)
+local function readInput(dt, k)
+  k = k or 1
   local wp = ui.windowPos()
   local mp = ui.mousePos()
-  IN.m = mp - wp
+  IN.raw = mp - wp
+  IN.m = IN.raw / k
   local ws = ui.windowSize()
-  local inside = IN.m.x >= 0 and IN.m.y >= 0 and IN.m.x <= ws.x and IN.m.y <= ws.y
+  local inside = IN.raw.x >= 0 and IN.raw.y >= 0 and IN.raw.x <= ws.x and IN.raw.y <= ws.y
   IN.hovered = inside and ui.windowHovered(ui.HoveredFlags.AllowWhenBlockedByActiveItem)
   IN.dt = dt
   IN.down = ui.mouseDown(ui.MouseButton.Left)
   IN.clicked = IN.hovered and ui.mouseClicked(ui.MouseButton.Left)
   IN.released = ui.mouseReleased(ui.MouseButton.Left)
-  IN.delta = ui.mouseDelta()
+  IN.delta = ui.mouseDelta() / k
   local wheel = ui.mouseWheel()
   IN.wheel = IN.hovered and wheel or 0
   IN.wheelGlobal = IN.hovered and 0 or wheel
@@ -5565,21 +5634,26 @@ function script.windowMain(dt)
   end
   lastDraw = now
   dt = clamp(dt or 0.016, 0, 0.1)
-  readInput(dt)
+  local k = clamp(S.phoneScale or 1, 0.6, 1.8)
+  if PHONE.appliedScale ~= k or PHONE.appliedMin ~= PHONE.minimized then PHONE.applySize() end
+  readInput(dt, k)
   if CAM.hidden then endInput() return end      -- taking a photo: draw nothing
   if PHONE.minimized then
+    GS.begin(k)
     capsule()
+    GS.finish()
     endInput()
     return
   end
+  GS.begin(k)
 
   openAnim = math.min(1, openAnim + dt / 0.35)
   local e = easeOut(openAnim)
   D.x, D.y, D.a = 0, 60 * (1 - e), e
   if openAnim < 1 then IN.locked = true end
 
-  -- phone body
-  local ws = ui.windowSize()
+  -- phone body (design units; the whole phone scales together)
+  local ws = PHONE.BASE
   rect(0, 0, ws.x, ws.y, T.body, 56)
   rectLine(1.5, 1.5, ws.x - 1.5, ws.y - 1.5, T.frame, 55, 2.5)
 
@@ -5620,19 +5694,123 @@ function script.windowMain(dt)
 
   if CAM.flash > 0 then rect(0, 0, SW, SH, rgbm(1, 1, 1, CAM.flash * 0.8), SCREEN.r) end
 
-  -- invisible catcher so clicks on the screen don't drag the window (drag by the status bar / frame instead)
-  ui.setCursor(vec2(SCREEN.x, SCREEN.y))
-  ui.invisibleButton('##acphone_screen', vec2(SW, SH))
+  -- resize: grab any edge or corner of the frame (proportions stay locked)
+  D.x, D.y, D.a = 0, 0, 1
+  local gx, gy = PHONE.BASE.x, PHONE.BASE.y
+  local m = IN.m
+  local onEdge = IN.hovered and (m.x > gx - 16 or m.y > gy - 16 or m.x < 12 or (m.x > gx - 40 and m.y > gy - 40))
+  local inScreen = m.x > SCREEN.x and m.x < SCREEN.x + SW and m.y > SCREEN.y and m.y < SCREEN.y + SH
+  if onEdge and inScreen and not (m.x > gx - 40 and m.y > gy - 40) then onEdge = false end
+  if onEdge and IN.clicked then
+    IN.active = '__resize'
+    PHONE.resizing = true
+    PHONE.resizeFrom, PHONE.resizeK = ui.mousePos(), k
+    PHONE.resizeLeft = m.x < 12
+  end
+  if onEdge or PHONE.resizing then
+    ui.setMouseCursor(type(ui.MouseCursor) == 'table' and ui.MouseCursor.ResizeNWSE or 6)
+    local a = PHONE.resizing and 0.95 or 0.55
+    rectLine(2, 2, gx - 2, gy - 2, rgbm(accent().r, accent().g, accent().b, a * 0.8), 55, 3)
+    for i = 0, 2 do line(gx - 14 - i * 8, gy - 6, gx - 6, gy - 14 - i * 8, rgbm(1, 1, 1, a), 2.5) end
+    if PHONE.resizing then
+      local label = string.format('%d%%', math.floor(k * 100 + 0.5))
+      rect(gx / 2 - 34, gy / 2 - 18, gx / 2 + 34, gy / 2 + 18, rgbm(0, 0, 0, 0.75), 18)
+      text(label, 18, gx / 2, gy / 2 - 12, T.white, F.numb, 0.5)
+    end
+  end
+  -- long-press the status bar to move the phone
+  if IN.clicked and IN.m.y < SCREEN.y + 46 then PHONE.pressAt, PHONE.pressRaw = clock(), ui.mousePos() PHONE.winStart = ui.windowPos() end
+  if IN.down and PHONE.pressAt and not PHONE.moving and clock() - PHONE.pressAt > 0.4 and (IN.m - IN.pressPos):length() < 8 and (IN.active == nil or IN.active == 'sb.left' or IN.active == 'sb.right' or IN.active == 'island') then
+    PHONE.moving = true
+    IN.active = '__move'
+  end
+  if PHONE.moving then
+    rect(0, 0, PHONE.BASE.x, PHONE.BASE.y, rgbm(1, 1, 1, 0.06), 56)
+    local label = 'Drag to move'
+    local w = measure(label, 13, F.sb).x + 28
+    rect(gx / 2 - w / 2, 70, gx / 2 + w / 2, 98, rgbm(0, 0, 0, 0.75), 14)
+    text(label, 13, gx / 2, 75, T.white, F.sb, 0.5)
+  end
+  GS.finish()
+
+  if PHONE.resizing then
+    if IN.down then
+      -- grow with the drag: diagonal distance relative to the phone size, keeping the top-left pinned
+      local d = ui.mousePos() - PHONE.resizeFrom
+      if PHONE.resizeLeft then d = vec2(-d.x, d.y) end
+      local grow = math.max(d.x / PHONE.BASE.x, d.y / PHONE.BASE.y)
+      local nk = clamp(PHONE.resizeK + grow, 0.6, 1.8)
+      S.phoneScale = math.floor(nk * 100 + 0.5) / 100
+    else
+      PHONE.resizing = false
+    end
+  end
+  -- right-click and drag anywhere to move
+  if IN.hovered and ui.mouseClicked(ui.MouseButton.Right) then
+    PHONE.rightMove, PHONE.pressRaw, PHONE.winStart = true, ui.mousePos(), ui.windowPos()
+  end
+  if PHONE.rightMove then
+    if ui.mouseDown(ui.MouseButton.Right) then
+      local acc = PHONE.selfWindow()
+      if acc then acc:move(PHONE.winStart + (ui.mousePos() - PHONE.pressRaw)) end
+    else
+      PHONE.rightMove = false
+    end
+  end
+  if PHONE.moving then
+    if IN.down then
+      local acc = PHONE.selfWindow()
+      if acc then acc:move(PHONE.winStart + (ui.mousePos() - PHONE.pressRaw)) end
+    else
+      PHONE.moving, PHONE.pressAt = false, nil
+    end
+  end
+  if not IN.down then PHONE.pressAt = nil end
+
+  -- invisible catchers so clicks on the screen and grip don't drag the window (drag by the frame or long-press the status bar)
+  ui.setCursor(vec2(SCREEN.x, SCREEN.y) * k)
+  ui.invisibleButton('##acphone_screen', vec2(SW, SH) * k)
+  -- frame edges used for resizing (left, right, bottom strips)
+  ui.setCursor(vec2((PHONE.BASE.x - 16) * k, 60 * k))
+  ui.invisibleButton('##acphone_gripR', vec2(16 * k, (PHONE.BASE.y - 60) * k))
+  ui.setCursor(vec2(0, (PHONE.BASE.y - 16) * k))
+  ui.invisibleButton('##acphone_gripB', vec2(PHONE.BASE.x * k, 16 * k))
+  ui.setCursor(vec2(0, 60 * k))
+  ui.invisibleButton('##acphone_gripL', vec2(12 * k, (PHONE.BASE.y - 60) * k))
   endInput()
+end
+
+-- our own window, for moving it from code
+function PHONE.selfWindow()
+  if PHONE.selfAcc and PHONE.selfAcc:valid() then return PHONE.selfAcc end
+  if not ac.getAppWindows then return nil end
+  for _, w in ipairs(ac.getAppWindows()) do
+    if w.title == 'AC Phone' then PHONE.selfAcc = ac.accessAppWindow(w.name) return PHONE.selfAcc end
+  end
+  return nil
 end
 
 -- ===========================================================================
 -- Action bar: on-screen Cut-Up HUD (its own window, works with the phone closed)
 -- ===========================================================================
 
+local BAR_BASE = vec2(560, 180)
+local barApplied = nil
 function script.actionBar(dt)
   D.x, D.y, D.a = 0, 0, 1
-  local ws = ui.windowSize()
+  local bk = clamp(S.barScale or 1, 0.5, 2)
+  if barApplied ~= bk and ac.setWindowSizeConstraints then
+    ac.setWindowSizeConstraints('actionbar', BAR_BASE * bk, BAR_BASE * bk)
+    barApplied = bk
+  end
+  GS.begin(bk)
+  local ok, err = pcall(script.actionBarDraw, dt)
+  GS.finish()
+  if not ok then ac.log('AC Phone action bar: ' .. tostring(err)) end
+end
+
+function script.actionBarDraw(dt)
+  local ws = BAR_BASE
   local cx = ws.x / 2
   local ac1 = accent()
   local gold = rgbm(1, 0.78, 0.22, 1)

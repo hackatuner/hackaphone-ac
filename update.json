@@ -1,22 +1,22 @@
 {
-  "version": "0.6.2",
-  "build": 8,
-  "notes": "New: album art wallpaper. Personalize › Wallpaper › Music sets the current song's cover as your wallpaper, and it changes with every track.",
+  "version": "0.7",
+  "build": 9,
+  "notes": "Resize the phone by dragging its frame edge or corner (it never distorts), or use Personalize › Size. Move it by right-click dragging anywhere. Action bar size slider.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 248057
+      "size": 255456
     },
     {
       "path": "manifest.ini",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/manifest.ini",
-      "size": 868
+      "size": 866
     },
     {
       "path": "README.md",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/README.md",
-      "size": 6712
+      "size": 7149
     },
     {
       "path": "icon.png",
