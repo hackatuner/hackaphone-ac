@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.1.7'
-local BUILD = 20
+local VERSION = '1.1.8'
+local BUILD = 21
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -1887,7 +1887,6 @@ function R.startCountdown()
   c.my, c.outcome = nil, nil
   c.opp = { d = 0, v = 0, at = clock() }
   if not ac.isWindowOpen('actionbar') then ac.setWindowOpen('actionbar', true) end
-  if ac.isWindowOpen('main') then ac.setWindowOpen('main', false) end   -- clear the screen for the HUD
 end
 
 local function logRace(c, outcome)
@@ -1926,9 +1925,6 @@ local function resolve(forfeitWin)
   c.outcome = o
   logRace(c, o)
   R.hudFade = 1
-  setTimeout(function()
-    if R.cur == c and R.state == 'finished' then ac.setWindowOpen('main', true) openUI() end
-  end, 5)
   if o.win == true then notify('You won the race', c.oppName .. (o.payout > 0 and (' · +' .. XM.money(o.payout)) or ''), '🏁', openUI, { force = true })
   elseif o.win == false then notify('You lost the race', c.oppName .. (c.wager > 0 and (' · -' .. XM.money(c.wager)) or ''), '🏁', openUI, { force = true }) end
 end
@@ -7477,7 +7473,6 @@ function APPMOD.Race.root()
         y = y + 8
         if W.button('so.arm', 'Arm ' .. R.specName(spec) .. ' run', 16, y, SW - 32, 52, 'filled') then
           R.soloArm(spec)
-          if ac.isWindowOpen('main') then ac.setWindowOpen('main', false) end
         end
         y = y + 64
       end
@@ -7834,6 +7829,10 @@ local function islandInfo()
   elseif CAM.mode == 'video' then return '🎬', 'Preview', T.red, 'cam' end
   if HESI.running then
     return '🔥 ' .. HESI.fmt(HESI.run), string.format('x%.1f', HESI.mult), rgbm(1, 0.75, 0.2, 1), 'hesi'
+  end
+  local rr = XM.race.run
+  if rr and rr.phase == 'running' then
+    return '🏁 ' .. string.format('%.2f', rr.t), math.floor(rr.v) .. ' km/h', accent(), 'lap'
   end
   if lapActive() then
     local car = ac.getCar(0)

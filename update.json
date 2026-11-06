@@ -1,12 +1,12 @@
 {
-  "version": "1.1.7",
-  "build": 20,
-  "notes": "1.1.7: live lap starts when the car moves and stops at 0 km/h, in the pits, or after a huge crash.",
+  "version": "1.1.8",
+  "build": 21,
+  "notes": "1.1.8: the phone stays open during races and keeps tracking live data; the island shows race time and speed.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 393916
+      "size": 393773
     },
     {
       "path": "manifest.ini",
