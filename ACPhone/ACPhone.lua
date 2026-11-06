@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.1.2'
-local BUILD = 15
+local VERSION = '1.1.3'
+local BUILD = 16
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -8477,7 +8477,16 @@ function script.windowMain(dt)
   -- phone body (design units; the whole phone scales together)
   local ws = PHONE.BASE
   rect(0, 0, ws.x, ws.y, T.body, 56)
-  rectLine(1.5, 1.5, ws.x - 1.5, ws.y - 1.5, T.frame, 55, 2.5)
+  -- rim: invisible until the cursor is over the phone, then it fades in with a soft accent edge
+  PHONE.rimA = (PHONE.rimA or 0) + ((IN.hovered and 1 or 0) - (PHONE.rimA or 0)) * math.min(1, IN.dt * 10)
+  if PHONE.rimA > 0.01 then
+    local oa, ac_ = D.a, accent()
+    D.a = oa * PHONE.rimA
+    rectLine(1, 1, ws.x - 1, ws.y - 1, rgbm(ac_.r, ac_.g, ac_.b, 0.22), 56, 5)
+    rectLine(1.5, 1.5, ws.x - 1.5, ws.y - 1.5, T.frame, 55, 2.5)
+    rectLine(3, 3, ws.x - 3, ws.y - 3, rgbm(1, 1, 1, 0.16), 53, 1)
+    D.a = oa
+  end
 
   -- screen
   D.x, D.y = SCREEN.x, SCREEN.y + 60 * (1 - e)
@@ -8632,9 +8641,21 @@ function script.actionBar(dt)
   if not ok then ac.log('HackaPhone action bar: ' .. tostring(err)) end
 end
 
+
 function script.actionBarDraw(dt)
   local ws = BAR_BASE
   local cx = ws.x / 2
+  -- window edge: invisible until hovered, so you can see where to grab and resize
+  local hov = ui.windowHovered(ui.HoveredFlags.AllowWhenBlockedByActiveItem) and true or false
+  PHONE.barHover = (PHONE.barHover or 0) + ((hov and 1 or 0) - (PHONE.barHover or 0)) * math.min(1, (dt or 0.016) * 10)
+  if PHONE.barHover > 0.01 then
+    local oa = D.a
+    D.a = oa * PHONE.barHover
+    local c = accent()
+    rect(1, 1, ws.x - 1, ws.y - 1, rgbm(1, 1, 1, 0.025), 28)
+    rectLine(1.5, 1.5, ws.x - 1.5, ws.y - 1.5, rgbm(c.r, c.g, c.b, 0.55), 28, 1.5)
+    D.a = oa
+  end
   local ac1 = accent()
   local gold = rgbm(1, 0.78, 0.22, 1)
   local minimal = S.barStyle == 2
@@ -8670,7 +8691,7 @@ function script.actionBarDraw(dt)
     -- glass bar
     rect(x1, y0, x2, y0 + bh, rgbm(0.03, 0.03, 0.04, 0.82), bh / 2)
     ui.drawRectFilledMultiColor(P(x1 + bh / 2, y0), P(x2 - bh / 2, y0 + 1.5), A(rgbm(1, 1, 1, 0)), A(rgbm(1, 1, 1, 0)), A(rgbm(1, 1, 1, 0.25)), A(rgbm(1, 1, 1, 0.25)))
-    rectLine(x1, y0, x2, y0 + bh, A(tcol, 0.4 + hot * 0.5 + HESI.pulse * 0.3), bh / 2, 1.5)
+    rectLine(x1, y0, x2, y0 + bh, A(tcol, (0.12 + hot * 0.3 + HESI.pulse * 0.3) * (1 - 0.5 * (1 - PHONE.barHover)) + 0.35 * PHONE.barHover), bh / 2, 1.5)
     -- combo timer underline
     local frac = clamp(HESI.combo / HESI.comboMax, 0, 1)
     rect(x1 + bh / 2, y0 + bh - 3, x1 + bh / 2 + (bw - bh) * frac, y0 + bh - 1, frac < 0.25 and T.red or tcol, 1)
