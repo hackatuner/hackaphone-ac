@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.1.6'
-local BUILD = 19
+local VERSION = '1.1.7'
+local BUILD = 20
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -7790,13 +7790,28 @@ end
 function PHONE.lapTrack()
   local car = ac.getCar(0)
   if not car then return end
+  local now, spd = clock(), car.speedKmh or 0
   local lt, laps = car.lapTimeMs or 0, car.lapCount or 0
+  -- the live lap stops when the car stops dead, goes back to the pits, or takes a huge hit
+  local stop = false
+  if spd < 1 then
+    PHONE.lapStill = PHONE.lapStill or now
+    if now - PHONE.lapStill > 0.6 then stop = true end
+  else PHONE.lapStill = nil end
+  if car.isInPitlane then stop = true end
+  local h = PHONE.lapHist or {}
+  PHONE.lapHist = h
+  h[#h + 1] = { now, spd }
+  while #h > 0 and now - h[1][1] > 0.35 do table.remove(h, 1) end
+  if h[1] and h[1][2] - spd > 70 then stop = true h = {} PHONE.lapHist = h end   -- 70+ km/h shed in a third of a second
   if PHONE.lapMoved and (laps ~= PHONE.lapSeen or lt + 1500 < (PHONE.lapPrev or 0)) then
     PHONE.lapMoved = false
     PHONE.lapOff = 0
-    if laps ~= PHONE.lapSeen and car.speedKmh > 3 then PHONE.lapMoved = true end   -- new lap, still rolling
+    if laps ~= PHONE.lapSeen and spd > 3 and not stop then PHONE.lapMoved = true end   -- new lap, still rolling
   end
-  if not PHONE.lapMoved and car.speedKmh > 3 then
+  if stop then
+    PHONE.lapMoved = false
+  elseif not PHONE.lapMoved and spd > 3 then
     PHONE.lapMoved, PHONE.lapOff = true, (laps ~= PHONE.lapSeen and 0 or lt)
   end
   PHONE.lapSeen, PHONE.lapPrev = laps, lt
