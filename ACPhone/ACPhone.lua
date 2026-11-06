@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.2.1'
-local BUILD = 23
+local VERSION = '1.2.2'
+local BUILD = 24
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -7699,60 +7699,77 @@ function C.switches()
 end
 function C.toggleSwitch(sw) if ac.setExtraSwitch then ac.setExtraSwitch(sw.index, not sw.on) end end
 
--- ---- colour glow: tinted spot lights ahead of the car, tinted glow at the tail
+-- ---- colour glow: tinted lights on the car (beams ahead, glow on the lamps, glow at the tail)
 local function killLights(kind)
   for _, l in ipairs(C.lights[kind] or {}) do pcall(l.dispose, l) end
   C.lights[kind] = nil
 end
 local function makeLight(spot)
-  if not ac.LightSource then return nil end
+  if not ac.LightSource then C.err = 'This CSP build has no light sources' return nil end
   local ok, l = pcall(ac.LightSource, 1)
-  if not ok or not l then return nil end
-  l.spot = spot l.spotSharpness = 0.5 l.specularMultiplier = 0.4 l.diffuseConcentration = 0.5
+  if not ok or not l then C.err = 'Could not create a light: ' .. tostring(l) return nil end
+  l.spot = spot
+  l.spotSharpness = 0.35
+  l.specularMultiplier = 0.6
+  l.diffuseConcentration = 0.4
+  l.affectsCars = true
+  l.showInReflections = true
+  l.skipLightMap = false
   return l
 end
+local function setLight(l, pos, dir, col, k, range, fade)
+  l.position = pos
+  if dir then l.direction = dir end
+  l.color = C.lc(col, k)
+  l.range, l.fadeAt, l.fadeSmooth = range, fade, fade * 0.6
+end
 
-function C.update(dt)
+function C.step(dt)
   local c = car0()
   if not c or not c.position or not c.look or not c.side then return end
   local look, side, up = c.look, c.side, c.up or vec3(0, 1, 0)
+  C.active = { head = false, tail = false }
   if S.carHeadOn then
     if not C.lights.head then
-      local a, b = makeLight(42), makeLight(42)
-      if a and b then C.lights.head = { a, b } end
+      local L = { makeLight(40), makeLight(40), makeLight(150), makeLight(150) }   -- two beams, two lamp glows
+      if L[1] and L[2] and L[3] and L[4] then C.lights.head = L else for _, l in pairs(L) do pcall(l.dispose, l) end end
     end
     local hs = C.lights.head
     if hs then
       local col = C.COLORS[S.carHeadCol] or C.COLORS[1]
-      local on = c.headlightsActive and 1 or 0.0
-      for i, l in ipairs(hs) do
+      local on = (c.headlightsActive or c.lowBeams or c.highBeams) and 1 or 0
+      local boost = c.highBeams and 1.6 or 1
+      C.active.head = on > 0
+      for i = 1, 2 do
         local sd = i == 1 and -0.62 or 0.62
-        l.position = c.position + look * 2.1 + side * sd + up * 0.62
-        l.direction = look
-        l.color = C.lc(col[2], on * 14 * S.carHeadPow)
-        l.range, l.fadeAt, l.fadeSmooth = 70, 55, 30
+        setLight(hs[i], c.position + look * 2.1 + side * sd + up * 0.62, look, col[2], on * 60 * S.carHeadPow * boost, 90, 70)
+        setLight(hs[i + 2], c.position + look * 2.35 + side * sd * 1.1 + up * 0.7, look, col[2], on * 14 * S.carHeadPow, 7, 5)
       end
     end
   elseif C.lights.head then killLights('head') end
   if S.carTailOn then
     if not C.lights.tail then
-      local a, b = makeLight(130), makeLight(130)
-      if a and b then C.lights.tail = { a, b } end
+      local L = { makeLight(150), makeLight(150), makeLight(170), makeLight(170) }
+      if L[1] and L[2] and L[3] and L[4] then C.lights.tail = L else for _, l in pairs(L) do pcall(l.dispose, l) end end
     end
     local ts = C.lights.tail
     if ts then
       local col = C.COLORS[S.carTailCol] or C.COLORS[3]
-      local lit = (c.headlightsActive or c.brakeLightsActive or c.daytimeRunningLights) and 1 or 0
-      local boost = c.brakeLightsActive and 2.4 or 1
-      for i, l in ipairs(ts) do
+      local lit = (c.headlightsActive or c.brakeLightsActive or c.daytimeRunningLights or c.lowBeams) and 1 or 0
+      local boost = c.brakeLightsActive and 2.6 or 1
+      C.active.tail = lit > 0
+      for i = 1, 2 do
         local sd = i == 1 and -0.6 or 0.6
-        l.position = c.position - look * 2.2 + side * sd + up * 0.7
-        l.direction = -look
-        l.color = C.lc(col[2], lit * 5 * boost * S.carTailPow)
-        l.range, l.fadeAt, l.fadeSmooth = 14, 10, 8
+        setLight(ts[i], c.position - look * 2.2 + side * sd + up * 0.7, look * -1, col[2], lit * 18 * boost * S.carTailPow, 24, 18)
+        setLight(ts[i + 2], c.position - look * 2.25 + side * sd * 1.05 + up * 0.72, look * -1, col[2], lit * 12 * boost * S.carTailPow, 5, 4)
       end
     end
   elseif C.lights.tail then killLights('tail') end
+end
+
+function C.update(dt)
+  local ok, err = pcall(C.step, dt)
+  if ok then C.stepErr = nil elseif C.stepErr ~= tostring(err) then C.stepErr = tostring(err) ac.log('HackaPhone car lights: ' .. C.stepErr) end
 end
 
 -- ---- UI
@@ -7824,7 +7841,7 @@ function APPMOD.Car.root()
       S.carHeadPow = W.sliderRow('car.hp', 'Brightness', S.carHeadPow, 0.2, 2.5, '%.1fx', y + 4, { last = true })
       y = y + 90
     end
-    y = W.sectionFooter('Adds a tinted beam in front of the car whenever your headlights are on. Visible to you in the game.', y)
+    y = W.sectionFooter(C.err or C.stepErr or (S.carHeadOn and (C.active and C.active.head and 'Colour is live.' or 'Turn your headlights on (tile above) to see the colour.') or 'Adds tinted beams and a glow on the lamps whenever your headlights are on.'), y)
 
     -- colour: tail lights
     y = W.sectionHeader('Tail light colour', y + 4)
@@ -7837,7 +7854,7 @@ function APPMOD.Car.root()
       S.carTailPow = W.sliderRow('car.tp', 'Brightness', S.carTailPow, 0.2, 2.5, '%.1fx', y + 4, { last = true })
       y = y + 90
     end
-    y = W.sectionFooter('Glows with your headlights and flares when you brake.', y)
+    y = W.sectionFooter(C.err or C.stepErr or (S.carTailOn and (C.active and C.active.tail and 'Colour is live.' or 'Glows once your headlights are on or you brake.') or 'Glows with your headlights and flares when you brake.'), y)
 
     -- body: bonnet, boot, doors
     y = W.sectionHeader('Bonnet, boot and doors', y + 4)

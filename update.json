@@ -1,12 +1,12 @@
 {
-  "version": "1.2.1",
-  "build": 23,
-  "notes": "1.2.1: fonts now actually change (system font loading fixed). Race Board: most wins, fastest 0-60 mph and 0-200 km/h podiums. Flash is hold-to-flash.",
+  "version": "1.2.2",
+  "build": 24,
+  "notes": "1.2.2: much stronger headlight and tail light colour (beams plus lamp glow), live status in the Car app.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 409975
+      "size": 411379
     },
     {
       "path": "manifest.ini",
