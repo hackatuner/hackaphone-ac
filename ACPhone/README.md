@@ -1,6 +1,13 @@
-# AC Phone v0.7
+# AC Phone v0.8
 
 An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everything is custom-drawn: no stock AC or ImGui boxes.
+
+## New in v0.8
+- **4K liveries:** paint is now rendered on your graphics card into a 4096×4096 texture with MIP maps, so it's sharp up close and clean at a distance. Edges are anti-aliased.
+- **Camo fixed:** real organic woodland camo (four tones, smooth natural shapes) instead of blocks. New **Urban** (grey), **Digital** (pixel) and **Tiger** camo, plus **Hex**.
+- **Realistic carbon:** 2×2 twill weave with shaded fibre tows. **Forged carbon** now shows real chopped-fibre flakes.
+- **Paint finishes in the texture:** Metallic and Candy get real flake sparkle, Pearl gets a colour shift, and Candy gets deeper, richer colour.
+- The car preview in the Livery app now shows the actual texture.
 
 ## New in v0.7
 - **Resize the phone:** drag the frame's right, left or bottom edge, or the bottom-right corner. It keeps its proportions, so nothing stretches or breaks, and text stays sharp at every size. There's also a size slider and S/M/L/XL presets in Personalize › Size.

@@ -1,12 +1,12 @@
 {
-  "version": "0.7",
-  "build": 9,
-  "notes": "Resize the phone by dragging its frame edge or corner (it never distorts), or use Personalize › Size. Move it by right-click dragging anywhere. Action bar size slider.",
+  "version": "0.8",
+  "build": 10,
+  "notes": "4K liveries rendered on your GPU. Real woodland camo plus Urban, Digital and Tiger camo, Hex, realistic twill and forged carbon, metallic flake and pearl shift.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 255456
+      "size": 263953
     },
     {
       "path": "manifest.ini",
@@ -16,7 +16,7 @@
     {
       "path": "README.md",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/README.md",
-      "size": 7149
+      "size": 7848
     },
     {
       "path": "icon.png",

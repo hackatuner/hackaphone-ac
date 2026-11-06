@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '0.7'
-local BUILD = 9
+local VERSION = '0.8'
+local BUILD = 10
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -3839,8 +3839,8 @@ local LV_PARTS = {
   rims = { 'car_paint_rims.dds', 'metal_detail_rim.dds', 'rim_detail.dds', 'rim_color.dds', 'rim_colour.dds' },
   calipers = { 'caliper_color.dds', 'caliper_colour.dds', 'metal_detail_caliper.dds', 'caliper_detail.dds', 'ext_caliper_color.dds' },
 }
-local LV_PATTERNS = { 'Solid', 'Fade', 'Stripes', 'Checker', 'Camo', 'Carbon', 'Racing', 'Diagonal', 'Split', 'Forged' }
-local LV_NEEDS2 = { Fade = true, Stripes = true, Checker = true, Camo = true, Racing = true, Diagonal = true, Split = true }
+local LV_PATTERNS = { 'Solid', 'Fade', 'Stripes', 'Checker', 'Camo', 'Carbon', 'Racing', 'Diagonal', 'Split', 'Forged', 'Digital', 'Tiger', 'Hex', 'Urban' }
+local LV_NEEDS2 = { Fade = true, Stripes = true, Checker = true, Camo = true, Racing = true, Diagonal = true, Split = true, Digital = true, Tiger = true, Hex = true, Urban = true }
 local LV_FINISHES = { 'Original', 'Gloss', 'Matte', 'Metallic', 'Pearl', 'Chrome', 'Satin', 'Candy' }
 local LV_FINISH_PROPS = {
   Gloss = { ksSpecular = 0.6, ksSpecularEXP = 120, fresnelMaxLevel = 0.5, fresnelC = 0.06 },
@@ -3960,19 +3960,185 @@ local function lvApplyFinish(meshes, finish)
   end
 end
 
+-- ---------------------------------------------------------------- 4K GPU paint textures
+-- Patterns are rendered by a pixel shader into a 4096x4096 canvas (with MIPs), saved as DDS and applied to the paint.
+local LV_SHADER = [[
+#define LV_PI 3.14159265
+float lvHash(float2 p) { p = frac(p * float2(234.34, 435.345)); p += dot(p, p + 34.23); return frac(p.x * p.y); }
+float lvNoise(float2 p) {
+  float2 i = floor(p); float2 f = frac(p);
+  float a = lvHash(i); float b = lvHash(i + float2(1, 0)); float c = lvHash(i + float2(0, 1)); float d = lvHash(i + float2(1, 1));
+  float2 u = f * f * (3.0 - 2.0 * f);
+  return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
+}
+float lvFbm(float2 p) {
+  float v = 0.0; float a = 0.5;
+  [unroll] for (int i = 0; i < 6; i++) { v += a * lvNoise(p); p = p * 2.02 + 17.0; a *= 0.5; }
+  return v;
+}
+float lvEdge(float edge, float x) { float w = max(fwidth(x) * 1.5, 0.0005); return smoothstep(edge - w, edge + w, x); }
+float lvHex(float2 p) { p = abs(p); return max(dot(p, normalize(float2(1.0, 1.7320508))), p.x); }
+
+float4 main(PS_IN pin) {
+  float2 uv = pin.Tex;
+  float3 c1 = gC1.rgb;
+  float3 c2 = gC2.rgb;
+  float3 col = c1;
+  int p = (int)(gPattern + 0.5);
+  if (p == 2) {
+    col = lerp(c1, c2, smoothstep(0.0, 1.0, uv.y));
+  } else if (p == 3) {
+    float s = frac(uv.y * 8.0);
+    col = lerp(c1, c2, lvEdge(0.30, s) * (1.0 - lvEdge(0.42, s)));
+  } else if (p == 4) {
+    float2 g = floor(uv * 12.0);
+    col = (fmod(g.x + g.y, 2.0) < 1.0) ? c2 : c1;
+  } else if (p == 5 || p == 14) {
+    float2 q = uv * 5.0 + gSeed;
+    float n1 = lvFbm(q); float n2 = lvFbm(q * 1.6 + 31.7); float n3 = lvFbm(q * 2.3 + 71.1);
+    float3 base = c1; float3 alt = c2;
+    if (p == 14) { float g1 = dot(c1, float3(0.3, 0.59, 0.11)); float g2 = dot(c2, float3(0.3, 0.59, 0.11)); base = float3(g1, g1, g1); alt = float3(g2, g2, g2); }
+    col = base;
+    col = lerp(col, alt, lvEdge(0.50, n1));
+    col = lerp(col, base * 0.42, lvEdge(0.55, n2));
+    col = lerp(col, lerp(base, alt, 0.5) * 1.15, lvEdge(0.60, n3));
+  } else if (p == 6) {
+    float2 g = uv * 384.0; float2 cell = floor(g); float2 f = frac(g);
+    bool horiz = fmod(cell.x + cell.y, 4.0) < 2.0;
+    float across = horiz ? f.y : f.x;
+    float along = horiz ? g.x : g.y;
+    float shade = pow(sin(across * LV_PI), 0.8) * (0.85 + 0.15 * lvNoise(float2(along * 3.0, across * 40.0)));
+    float3 dark = float3(0.022, 0.024, 0.028); float3 lite = float3(0.15, 0.155, 0.17);
+    col = lerp(dark, lite, shade) + c1 * 0.04;
+  } else if (p == 7) {
+    float m = lvEdge(0.40, uv.x) * (1.0 - lvEdge(0.47, uv.x)) + lvEdge(0.53, uv.x) * (1.0 - lvEdge(0.60, uv.x));
+    col = lerp(c1, c2, m);
+  } else if (p == 8) {
+    float s = frac((uv.x * 0.55 + uv.y) * 5.0);
+    col = lerp(c1, c2, lvEdge(0.15, s) * (1.0 - lvEdge(0.45, s)));
+  } else if (p == 9) {
+    col = lerp(c1, c2, lvEdge(0.5, uv.y));
+  } else if (p == 10) {
+    float2 q = uv * 22.0 + float2(lvFbm(uv * 4.0), lvFbm(uv * 4.0 + 9.0)) * 2.0;
+    float2 i = floor(q); float2 f = frac(q);
+    float best = 8.0; float id = 0.0;
+    [unroll] for (int y = -1; y <= 1; y++) [unroll] for (int x = -1; x <= 1; x++) {
+      float2 o = float2(x, y); float2 pt = float2(lvHash(i + o), lvHash(i + o + 5.3));
+      float d = length(o + pt - f);
+      if (d < best) { best = d; id = lvHash(i + o + 11.7); }
+    }
+    float v = 0.05 + id * 0.16;
+    col = float3(v, v, v * 1.04) * (0.8 + 0.2 * smoothstep(0.0, 0.6, best)) + c1 * 0.03;
+  } else if (p == 11) {
+    float2 g = floor(uv * 96.0) / 96.0;
+    float n = lvFbm(g * 7.0 + gSeed) + (lvHash(floor(uv * 192.0)) - 0.5) * 0.12;
+    col = c1;
+    col = lerp(col, c2, step(0.48, n));
+    col = lerp(col, c1 * 0.45, step(0.58, n));
+    col = lerp(col, lerp(c1, c2, 0.5) * 1.2, step(0.66, n));
+  } else if (p == 12) {
+    float w = lvFbm(uv * 3.0 + gSeed) * 0.7;
+    float s = sin((uv.x + w) * 42.0 + lvFbm(uv * 8.0) * 3.0) * 0.5 + 0.5;
+    col = lerp(c1, c2, lvEdge(0.62, s));
+  } else if (p == 13) {
+    float2 r = float2(1.0, 1.7320508);
+    float2 q = uv * 40.0;
+    float2 a = fmod(q, r) - r * 0.5;
+    float2 b = fmod(q - r * 0.5, r) - r * 0.5;
+    float2 h = dot(a, a) < dot(b, b) ? a : b;
+    float d = lvHex(h);
+    col = lerp(c1, c2, lvEdge(0.44, d));
+  }
+  int fin = (int)(gFinish + 0.5);
+  if (fin == 4 || fin == 5 || fin == 8) {
+    float flake = lvHash(floor(uv * 2048.0));
+    col += (flake - 0.5) * (fin == 5 ? 0.10 : 0.07) * (0.4 + dot(col, float3(0.33, 0.33, 0.33)));
+  }
+  if (fin == 5) col = lerp(col, col.gbr, 0.06 + 0.06 * sin(uv.x * 9.0 + uv.y * 5.0));
+  if (fin == 8) col = col * col * 1.25;
+  return float4(saturate(col), 1.0);
+}
+]]
+
+LV.files = {}
+LV.res = 4096
+LV.shaderOK = nil   -- nil = untested, true/false after self-test
+
+local function lvDir() return ac.getFolder(ac.FolderID.ScriptOrigin) .. '/liveries' end
+
+local function lvValues(cfg)
+  return { gC1 = col(cfg.c1), gC2 = col(cfg.c2), gPattern = cfg.pattern or 1, gFinish = cfg.finish or 1, gSeed = 3.7 }
+end
+
+-- renders cfg into a DDS file; returns its path or nil
+local function lvRenderTexture(cfg, tag)
+  if not (ui.ExtraCanvas and LV.shaderOK ~= false) then return nil end
+  local ok, path = pcall(function()
+    local canvas = ui.ExtraCanvas(vec2(LV.res, LV.res), 12)
+    canvas:clear(col(cfg.c1))
+    canvas:updateWithShader({ values = lvValues(cfg), shader = LV_SHADER, cacheKey = 7 })
+    pcall(function() canvas:mipsUpdate() end)
+    pcall(io.createDir, lvDir())
+    LV.serial = (LV.serial or 0) + 1
+    local file = lvDir() .. '/' .. tag .. '_' .. os.time() .. '_' .. LV.serial .. '.dds'
+    canvas:save(file, ac.ImageFormat and ac.ImageFormat.DDS or nil)
+    canvas:dispose()
+    return file
+  end)
+  if not ok or not path then return nil end
+  if LV.files[tag] and LV.files[tag] ~= path then pcall(io.deleteFile, LV.files[tag]) end
+  LV.files[tag] = path
+  return path
+end
+
+-- one-time check that the shader compiles on this PC; falls back to simple patterns if not
+local function lvSelfTest()
+  if LV.shaderOK ~= nil or not ui.ExtraCanvas then return end
+  LV.shaderOK = false
+  pcall(function()
+    local probe = ui.ExtraCanvas(vec2(8, 8), 1)
+    probe:clear(rgbm(1, 0, 1, 1))
+    probe:updateWithShader({ values = { gC1 = rgbm(0, 1, 0, 1), gC2 = rgbm(0, 0, 1, 1), gPattern = 1, gFinish = 1, gSeed = 3.7 }, shader = LV_SHADER, cacheKey = 7 })
+    probe:accessData(function(err, data)
+      if not err and data then
+        local c = data:color(4, 4)
+        LV.shaderOK = c.g > 0.8 and c.r < 0.2
+      end
+      probe:dispose()
+    end)
+  end)
+end
+LV.selfTest = lvSelfTest
+
+-- clear textures left from earlier sessions
+pcall(function()
+  for _, f in ipairs(io.scanDir(lvDir(), '*.dds') or {}) do pcall(io.deleteFile, lvDir() .. '/' .. f) end
+end)
+
 local function lvApply(index, cfg)
   if not cfg or not cfg.on then return 0 end
   local count = 0
   local body = lvMeshes(index, 'body')
+  local tex = #body > 0 and lvRenderTexture(cfg, 'car' .. index) or nil
   for _, m in ipairs(body) do
     count = count + 1
     pcall(function()
       m:ensureUniqueMaterials()
-      m:setMaterialTexture('txDiffuse', {
-        textureSize = vec2(1024, 1024),
-        background = cfg.full and col(cfg.c1) or nil,
-        callback = function() lvDrawPattern(cfg, 1024) end,
-      })
+      if tex and cfg.full then
+        m:setMaterialTexture('txDiffuse', tex)
+      elseif tex then
+        m:setMaterialTexture('txDiffuse', {
+          textureSize = vec2(2048, 2048),
+          background = nil,
+          callback = function() display.image({ image = tex, pos = vec2(0, 0), size = vec2(2048, 2048), color = rgbm(1, 1, 1, cfg.strength) }) end,
+        })
+      else
+        m:setMaterialTexture('txDiffuse', {
+          textureSize = vec2(1024, 1024),
+          background = cfg.full and col(cfg.c1) or nil,
+          callback = function() lvDrawPattern(cfg, 1024) end,
+        })
+      end
     end)
   end
   lvApplyFinish(body, cfg.finish)
@@ -4054,7 +4220,24 @@ local function lvPreview(x, y, w, h)
   -- cabin
   ui.drawQuadFilled(P(bx1 + w * 0.22, by1 + 2), P(bx1 + w * 0.32, by1 - 34), P(bx2 - w * 0.30, by1 - 34), P(bx2 - w * 0.12, by1 + 2), A(c1))
   ui.drawQuadFilled(P(bx1 + w * 0.26, by1 - 2), P(bx1 + w * 0.34, by1 - 29), P(bx2 - w * 0.31, by1 - 29), P(bx2 - w * 0.16, by1 - 2), A(rgbm(0.12, 0.16, 0.22, 1)))
-  if cfg.on then
+  -- real preview: the same GPU shader, rendered small
+  local drewShader = false
+  if cfg.on and LV.shaderOK and ui.ExtraCanvas then
+    local key = lvPack(cfg)
+    if LV.prevKey ~= key then
+      pcall(function()
+        LV.prevCanvas = LV.prevCanvas or ui.ExtraCanvas(vec2(512, 512), 1)
+        LV.prevCanvas:updateWithShader({ values = lvValues(cfg), shader = LV_SHADER, cacheKey = 7 })
+      end)
+      LV.prevKey = key
+    end
+    if LV.prevCanvas then
+      drewShader = pcall(ui.drawImageRounded, LV.prevCanvas, P(bx1, by1), P(bx2, by2), A(T.white), vec2(0.15, 0.25), vec2(0.85, 0.55), 14)
+      pcall(ui.drawImageRounded, LV.prevCanvas, P(bx1 + w * 0.24, by1 - 32), P(bx2 - w * 0.14, by1 + 4), A(T.white), vec2(0.3, 0.1), vec2(0.7, 0.2), 6)
+      ui.drawQuadFilled(P(bx1 + w * 0.26, by1 - 2), P(bx1 + w * 0.34, by1 - 29), P(bx2 - w * 0.31, by1 - 29), P(bx2 - w * 0.16, by1 - 2), A(rgbm(0.12, 0.16, 0.22, 1)))
+    end
+  end
+  if cfg.on and not drewShader then
     local p = LV_PATTERNS[cfg.pattern]
     if p == 'Stripes' then rect(bx1, by1 + 14, bx2, by1 + 22, col(cfg.c2), 0)
     elseif p == 'Fade' then ui.drawRectFilledMultiColor(P(bx1, by1 + 8), P(bx2, by2), A(col(cfg.c1)), A(col(cfg.c1)), A(col(cfg.c2)), A(col(cfg.c2)))
@@ -4248,6 +4431,8 @@ function APPMOD.Livery.root()
 end
 
 LIVERY_API.apply = lvApply
+LIVERY_API.selfTest = function() LV.selfTest() end
+LIVERY_API.shaderOK = function() return LV.shaderOK end
 LIVERY_API.broadcast = lvBroadcast
 LIVERY_API.cfg = function() return LV.cfg end
 end
@@ -4800,6 +4985,7 @@ if rawget(_G, '__ACPHONE_TEST') then
   T_.addMessage, T_.threadScreen, T_.navPush, T_.setMinimized, T_.PHONE = addMessage, threadScreen, navPush, setMinimized, PHONE
   T_.walkStart, T_.videoStart, T_.S, T_.IN, T_.UPD = walkStart, videoStart, S, IN, UPD
   T_.HESI, T_.applyTheme, T_.buildFonts = HESI, applyTheme, buildFonts
+  T_.LIVERY = { selfTest = LIVERY_API.selfTest, apply = LIVERY_API.apply, cfg = LIVERY_API.cfg, shaderOK = LIVERY_API.shaderOK }
 end
 
 UPD.openScreen = function()
@@ -5894,6 +6080,7 @@ local started = false
 function script.update(dt)
   if not started then
     started = true
+    pcall(LIVERY_API.selfTest)
     setTimeout(function()
       if ac.getSim().isOnlineRace then
         broadcastPresence()
