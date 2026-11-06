@@ -1,12 +1,12 @@
 {
-  "version": "1.2.0",
-  "build": 22,
-  "notes": "1.2.0: new Car app (lights, colours, doors, bonnet, boot). Phone stays open in races.",
+  "version": "1.2.1",
+  "build": 23,
+  "notes": "1.2.1: fonts now actually change (system font loading fixed). Race Board: most wins, fastest 0-60 mph and 0-200 km/h podiums. Flash is hold-to-flash.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 403908
+      "size": 409975
     },
     {
       "path": "manifest.ini",

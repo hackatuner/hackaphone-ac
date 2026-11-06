@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.2.0'
-local BUILD = 22
+local VERSION = '1.2.1'
+local BUILD = 23
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -206,7 +206,7 @@ local FONT_FAMILIES = {
 }
 
 local function makeFont(weight, key, family)
-  local f = ui.DWriteFont(family or 'Segoe UI')
+  local f = ui.DWriteFont(family or 'Segoe UI', '@System')   -- system fonts need the @System collection
   if weight then f = f:weight(weight) end
   if f.allowEmoji then f = f:allowEmoji(true) end
   return { f = f, key = key }
@@ -1826,6 +1826,7 @@ R.PRESETS = {
   { id = 'h2',   name = '1/2 mile',  kind = 1, x = QMILE * 2, y = 0 },
   { id = 'm1',   name = '1 mile',    kind = 1, x = MILE,   y = 0 },
   { id = 'k1',   name = '1 km',      kind = 1, x = 1000,   y = 0 },
+  { id = 'p60',  name = '0-60 mph',  kind = 2, x = 96.56,  y = 0 },
   { id = 'p100', name = '0-100',     kind = 2, x = 100,    y = 0 },
   { id = 'p200', name = '0-200',     kind = 2, x = 200,    y = 0 },
   { id = 'p300', name = '0-300',     kind = 2, x = 300,    y = 0 },
@@ -1915,7 +1916,7 @@ local function resolve(forfeitWin)
   o.payout = 0
   if o.win == true then
     o.payout = c.wager * 2
-    S.raceWins = S.raceWins + 1 S.raceStreak = S.raceStreak + 1
+    S.raceWins = S.raceWins + 1 S.raceStreak = S.raceStreak + 1 R.lbAt = 0
   elseif o.win == false then
     S.raceLosses = S.raceLosses + 1 S.raceStreak = 0
   else
@@ -1978,6 +1979,57 @@ onEvent = function(sender, d)
   end
 end
 R.handle = onEvent
+
+-- ---------------------------------------------------------------- leaderboard
+-- every HackaPhone driver shares their best 0-60 mph, best 0-200 km/h and race wins; the crew board is remembered between sessions
+local LB_KEYS = { t60 = '2:96:0', t200 = '2:200:0' }
+function R.myBest(code)
+  local best, car
+  for _, b in pairs(XM.jget('raceBests', {})) do
+    if b.spec and b.spec.kind == 2 and b.spec.y == 0 and (b.spec.kind .. ':' .. math.floor(b.spec.x) .. ':' .. b.spec.y) == code then
+      if not best or b.t < best then best, car = b.t, b.car end
+    end
+  end
+  return best, car
+end
+local lbSend
+lbSend = ac.OnlineEvent({
+  ac.StructItem.key('acphone.rlb.v1'),
+  t60 = ac.StructItem.float(), t200 = ac.StructItem.float(), wins = ac.StructItem.int32(),
+  car60 = ac.StructItem.string(24), car200 = ac.StructItem.string(24),
+}, function(sender, d)
+  if not sender or sender.index == 0 then return end
+  local name = ac.getDriverName(sender.index)
+  if not name or name == '' then return end
+  local store = XM.jget('raceLB', {})
+  store[name] = { t60 = d.t60 > 0 and d.t60 or nil, t200 = d.t200 > 0 and d.t200 or nil, wins = d.wins, car60 = d.car60, car200 = d.car200, at = os.time() }
+  XM.jset('raceLB', store)
+end)
+function R.lbBroadcast()
+  local t60, c60 = R.myBest(LB_KEYS.t60)
+  local t200, c200 = R.myBest(LB_KEYS.t200)
+  lbSend({ t60 = t60 or 0, t200 = t200 or 0, wins = S.raceWins, car60 = (c60 or ''):sub(1, 22), car200 = (c200 or ''):sub(1, 22) })
+  R.lbAt = clock() + 25
+end
+-- kind: 'wins' | 't60' | 't200'; rows sorted best first
+function R.boardRows(kind)
+  local rows, me = {}, ac.getDriverName(0) or 'You'
+  local store = XM.jget('raceLB', {})
+  local mine = { t60 = (R.myBest(LB_KEYS.t60)), t200 = (R.myBest(LB_KEYS.t200)), wins = S.raceWins }
+  local _, c60 = R.myBest(LB_KEYS.t60)
+  local _, c200 = R.myBest(LB_KEYS.t200)
+  store[me] = { t60 = mine.t60, t200 = mine.t200, wins = mine.wins, car60 = c60, car200 = c200 }
+  for name, e in pairs(store) do
+    local v = e[kind]
+    if v and v > 0 then rows[#rows + 1] = { name = name, value = v, me = name == me, car = kind == 't60' and e.car60 or (kind == 't200' and e.car200 or nil) } end
+  end
+  if kind == 'wins' then
+    table.sort(rows, function(a, b) if a.value ~= b.value then return a.value > b.value end return a.name < b.name end)
+  else
+    table.sort(rows, function(a, b) if a.value ~= b.value then return a.value < b.value end return a.name < b.name end)
+  end
+  return rows
+end
 
 -- ---------------------------------------------------------------- actions
 function R.challenge(player, spec, wager)
@@ -2059,6 +2111,7 @@ local function finishRun(run, tFin, v, extra)
     bests[key] = { t = res.t, trap = res.trap, at = res.at, name = res.name, car = run.car, spec = run.spec }
     XM.jset('raceBests', bests)
     res.record = true
+    R.lbAt = 0
   end
   if run.mode == 'solo' then
     R.soloResult = res
@@ -2081,6 +2134,7 @@ end
 -- ---------------------------------------------------------------- per-frame
 function R.update(dt)
   local c = R.cur
+  if ac.getSim().isOnlineRace and clock() > (R.lbAt or 0) then R.lbBroadcast() end
   -- expire stale invitations
   if (R.state == 'invited_out' or R.state == 'invited_in') and c and clock() - c.at > 60 then
     if R.state == 'invited_out' then send(4, c.oppSid) end
@@ -7346,6 +7400,66 @@ local function sheet(res, y, other)
   return y
 end
 
+
+local BOARD_KIND = { 'wins', 't60', 't200' }
+local BOARD_TAB = 1
+local BOARD_MEDAL = { rgbm(1, 0.82, 0.25, 1), rgbm(0.80, 0.82, 0.86, 1), rgbm(0.85, 0.55, 0.30, 1) }
+function APPMOD.Race.board(y)
+  BOARD_TAB = W.segmented('rc.bt', { 'Most wins', '0-60 mph', '0-200 km/h' }, BOARD_TAB, 16, y, SW - 32)
+  y = y + 52
+  local kind = BOARD_KIND[BOARD_TAB]
+  local rows = R.boardRows(kind)
+  local function val(r) return kind == 'wins' and (r.value .. (r.value == 1 and ' win' or ' wins')) or string.format('%.2f s', r.value) end
+  if #rows == 0 then
+    glyph('FLAG', SW / 2 - 18, y + 16, 36, T.label3)
+    text(kind == 'wins' and 'No race wins yet' or 'No times yet', 15, SW / 2, y + 64, T.label, F.sb, 0.5)
+    textBox(kind == 'wins' and 'Win a race against a friend to get on the board.' or 'Run a solo pull from the Solo tab to set a time.', 12, 40, y + 90, SW - 40, y + 130, T.label2)
+    y = y + 140
+  else
+    local pw = (SW - 32 - 16) / 3
+    local order, heights = { 2, 1, 3 }, { [1] = 100, [2] = 80, [3] = 66 }
+    for k, rank in ipairs(order) do
+      local r = rows[rank]
+      if r then
+        local x = 16 + (k - 1) * (pw + 8)
+        local h = heights[rank]
+        local top = y + 104 - h
+        local col = BOARD_MEDAL[rank]
+        avatar(r.name, x + pw / 2 - 22, top - 52, 44)
+        textFit(r.name .. (r.me and ' (you)' or ''), 12, x + pw / 2, top - 4, pw - 6, T.label, F.sb, 0.5)
+        rect(x, top + 14, x + pw, y + 118, mix(T.cell, col, 0.22), 12, ui.CornerFlags.Top)
+        rect(x, top + 14, x + pw, top + 17, col, 2)
+        text(tostring(rank), 26, x + pw / 2, top + 22, col, F.numb, 0.5)
+        textFit(val(r), 12, x + pw / 2, top + 56, pw - 8, T.white, F.numb, 0.5)
+      end
+    end
+    y = y + 134
+    local n = math.min(#rows, 12)
+    if n > 3 then
+      rect(LIST.x, y, LIST.x + LIST.w, y + (n - 3) * 50, T.cell, 14)
+      for i = 4, n do
+        local r = rows[i]
+        local ry = y + (i - 4) * 50
+        if r.me then rect(LIST.x, ry, LIST.x + LIST.w, ry + 50, A(accent(), 0.14), 14) end
+        text(tostring(i), 16, LIST.x + 22, ry + 15, T.label2, F.numb, 0.5)
+        avatar(r.name, LIST.x + 40, ry + 7, 36)
+        textFit(r.name .. (r.me and '  (you)' or ''), 15, LIST.x + 86, ry + 8, LIST.w - 190, T.label, F.sb)
+        if r.car and r.car ~= '' then textFit(r.car, 11, LIST.x + 86, ry + 28, LIST.w - 190, T.label2) end
+        text(val(r), 15, LIST.x + LIST.w - 14, ry + 16, T.white, F.numb, 1)
+      end
+      y = y + (n - 3) * 50
+    end
+  end
+  if kind ~= 'wins' then
+    local spec = kind == 't60' and R.PRESETS[6] or R.PRESETS[8]
+    local armed = R.run and R.run.mode == 'solo'
+    if W.button('rc.bd', armed and 'Armed, go!' or ('Run ' .. R.specName(spec) .. ' now'), 16, y + 14, SW - 32, 46, armed and 'gray' or 'filled') and not armed then R.soloArm(spec) end
+    y = y + 70
+  end
+  y = W.sectionFooter('Times and wins from every driver running HackaPhone. The board remembers drivers between sessions.', y)
+  return y
+end
+
 function APPMOD.Race.root()
   local scr = { title = 'Race' }
   local tab = 1
@@ -7357,8 +7471,15 @@ function APPMOD.Race.root()
     local y = largeTitle('Race', 96, s.y)
     local ac1 = accent()
     text(string.format('%dW  %dL  ·  streak %d', S.raceWins, S.raceLosses, S.raceStreak), 13, SW - 16, y - 14, GOLD, F.numb, 1)
-    tab = W.segmented('rc.tab', { 'Race', 'Solo', 'Records' }, tab, 16, y, SW - 32)
+    tab = W.segmented('rc.tab', { 'Race', 'Solo', 'Records', 'Board' }, tab, 16, y, SW - 32)
     y = y + 46
+
+    if tab == 4 then
+      y = APPMOD.Race.board(y)
+      scrollEnd(s, y + 20)
+      navBar('Race', { large = true }, s.y)
+      return
+    end
     local c = R.cur
     if tab == 1 then
       if R.state == 'idle' then
@@ -7646,7 +7767,7 @@ local function bigTile(id, x, y, w, h, label, sub, on, icon)
   text(icon, 22, x + 16, y + 12, mix(T.label2, ac1, a), F.sb)
   textFit(label, 14, x + 16, y + h - 40, w - 24, T.label, F.sb)
   textFit(sub, 11, x + 16, y + h - 22, w - 24, on and ac1 or T.label2, F.r)
-  return fired
+  return fired, pressed
 end
 
 local function swatches(idKey, y, selected, onPick)
@@ -7678,13 +7799,17 @@ function APPMOD.Car.root()
       { 'hl', 'Headlights', c and c.headlightsActive and 'On' or 'Off', c and c.headlightsActive, '●', C.headlights },
       { 'hb', 'High beams', c and c.highBeams and 'On' or 'Off', c and c.highBeams, '◉', C.highBeams },
       { 'hz', 'Hazards', c and c.hazardLights and 'Flashing' or 'Off', c and c.hazardLights, '▲', C.hazards },
-      { 'fl', 'Flash', 'Tap to flash', false, '⚡', C.flash },
+      { 'fl', 'Flash', 'Hold to flash', false, '⚡', nil },
       { 'dl', 'Daytime lights', c and c.daytimeRunningLights and 'On' or 'Off', c and c.daytimeRunningLights, '☀', C.daytime },
       { 'dd', 'Driver door', c and c.isDriverDoorOpen and 'Open' or 'Closed', c and c.isDriverDoorOpen, '▯', C.driverDoor },
     }
     for i, t in ipairs(tiles) do
       local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
-      if bigTile('car.' .. t[1], 16 + col * (gw + 10), y + row * (gh + 10), gw, gh, t[2], t[3], t[4] and true or false, t[5]) then t[6]() end
+      local fired, held = bigTile('car.' .. t[1], 16 + col * (gw + 10), y + row * (gh + 10), gw, gh, t[2], t[3], (t[4] or (t[1] == 'fl' and C.flashHeld)) and true or false, t[5])
+      if t[1] == 'fl' then
+        C.flashHeld = held and true or false
+        if held then C.flash() end        -- flashes only while your finger is down
+      elseif fired then t[6]() end
     end
     y = y + 3 * (gh + 10) + 6
 
