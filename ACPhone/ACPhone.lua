@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '0.6'
-local BUILD = 6
+local VERSION = '0.6.1'
+local BUILD = 7
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -2099,29 +2099,52 @@ local MEDIA = { pendingPlay = nil, pendingAt = 0, lastSend = 0 }
 local WALL = {}
 
 do
--- media keys through Windows Script Host: 179 play/pause, 176 next, 177 previous, 175 vol up, 174 vol down
-local function sendMediaKey(vk)
-  if clock() - MEDIA.lastSend < 0.25 then return end
-  MEDIA.lastSend = clock()
-  if not os.runConsoleProcess then toast('Music controls', 'Needs a newer CSP', '⚠️') return end
+-- fallback only: media keys through Windows Script Host (179 play/pause, 176 next, 177 previous, 175 vol up, 174 vol down)
+local function sendMediaKeyFallback(vk)
+  if not os.runConsoleProcess then return false end
   pcall(os.runConsoleProcess, {
     filename = 'powershell.exe',
     arguments = { '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command',
       '(New-Object -ComObject WScript.Shell).SendKeys([char]' .. vk .. ')' },
     timeout = 6000, terminateWithScript = false,
   }, function() end)
+  return true
+end
+
+-- press a key through CSP (works while AC is the active window)
+local function tapKey(vk)
+  if not ac.sendKeyboardButtonEvent then return false end
+  local ok = pcall(ac.sendKeyboardButtonEvent, vk, true)
+  if not ok then return false end
+  setTimeout(function() pcall(ac.sendKeyboardButtonEvent, vk, false) end, 0.05)
+  return true
+end
+
+local function guard()
+  if clock() - MEDIA.lastSend < 0.25 then return false end
+  MEDIA.lastSend = clock()
+  return true
+end
+
+-- CSP's own media controls first; fall back to other methods on older CSP
+local function media(builtin, vk)
+  if not guard() then return end
+  if builtin and pcall(builtin) then return end
+  if tapKey(vk) then return end
+  if not sendMediaKeyFallback(vk) then toast('Music controls', 'Your CSP version can’t control media', '⚠️') end
 end
 
 function MEDIA.playPause()
   local m = LIVE.music
   MEDIA.pendingPlay = not (m and m.isPlaying)
   MEDIA.pendingAt = clock()
-  sendMediaKey(179)
+  media(ac.mediaPlayPause, 179)
+  LIVE.musicCheck = 0
 end
-function MEDIA.next() sendMediaKey(176) end
-function MEDIA.prev() sendMediaKey(177) end
-function MEDIA.volUp() sendMediaKey(175) end
-function MEDIA.volDown() sendMediaKey(174) end
+function MEDIA.next() media(ac.mediaNextTrack, 176) LIVE.musicCheck = clock() - 0.3 end
+function MEDIA.prev() media(ac.mediaPreviousTrack, 177) LIVE.musicCheck = clock() - 0.3 end
+function MEDIA.volUp() media(nil, 175) end
+function MEDIA.volDown() media(nil, 174) end
 
 -- current track, with an optimistic play state right after a tap
 function MEDIA.now()

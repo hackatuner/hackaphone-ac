@@ -1,6 +1,9 @@
-# AC Phone v0.6
+# AC Phone v0.6.1
 
 An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everything is custom-drawn: no stock AC or ImGui boxes.
+
+## New in v0.6.1
+- Music controls fixed: play/pause, next and previous now use CSP's built-in media controls, so they work with Spotify, YouTube, Apple Music and other Windows players.
 
 ## New in v0.6
 - **Leaderboards:** server standings with a top-3 podium and gaps to the leader (laps in races), a lap-time ranking, Cut-Up boards (Live, Session, All-time) and drift points. Everyone on the server is included.

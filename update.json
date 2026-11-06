@@ -1,22 +1,22 @@
 {
-  "version": "0.6",
-  "build": 6,
-  "notes": "New Leaderboards app: server standings with podium, lap times, Cut-Up boards and drift points. Fixed a Music app crash.",
+  "version": "0.6.1",
+  "build": 7,
+  "notes": "Music controls fixed: play/pause, next and previous now control your PC's music player.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 245406
+      "size": 246252
     },
     {
       "path": "manifest.ini",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/manifest.ini",
-      "size": 866
+      "size": 868
     },
     {
       "path": "README.md",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/README.md",
-      "size": 6314
+      "size": 6502
     },
     {
       "path": "icon.png",
