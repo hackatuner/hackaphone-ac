@@ -1,12 +1,12 @@
 {
-  "version": "1.3.1",
-  "build": 26,
-  "notes": "1.3.1: Flash is now a proper toggle: tap to start blinking, tap again to stop (restores your lights).",
+  "version": "1.3.2",
+  "build": 27,
+  "notes": "1.3.2: fixes apps missing from the home screen (layout storage key); home screen now has a safety fallback.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 418415
+      "size": 419570
     },
     {
       "path": "manifest.ini",

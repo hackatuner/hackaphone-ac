@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.3.1'
-local BUILD = 26
+local VERSION = '1.3.2'
+local BUILD = 27
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -93,6 +93,7 @@ local S = ac.storage({
   liveryPresets = '[]',
   skinFavs = '',
   hesiOn = true,
+  homeLayout = '', raceLB = '',
   carHeadOn = false, carHeadCol = 1, carHeadPow = 1.0, carTailOn = false, carTailCol = 3, carTailPow = 1.0,
   hesiPB = 0,
   hesiTotal = 0,
@@ -8760,8 +8761,7 @@ function HOME.drawPage(page, ox)
   D.x = oldX
 end
 
-local function homeScreen()
-  wallpaper()
+function HOME.draw()
   HOME.hits = {}
   local edit = HOME.edit
   -- page swipe
@@ -8845,6 +8845,9 @@ local function homeScreen()
     circle(cx, dy, 3.5, rgbm(1, 1, 1, sel and 1 or 0.4))
     if tap('dot' .. i, cx - 9, dy - 10, cx + 9, dy + 10) then HOME.page = i end
   end
+end
+
+function HOME.dock()
   -- dock
   local dockY = SH - 112
   rect(12, dockY, SW - 12, SH - 18, rgbm(1, 1, 1, 0.16), 32)
@@ -8853,6 +8856,39 @@ local function homeScreen()
     local a = APP_BY_ID[id]
     appIconDraw(id, a.icon, nil, 24 + (i - 1) * (ICON + dgap), dockY + 17, a.c1, a.c2, a.badge and a.badge() or 0, function() openApp(id) end)
   end
+end
+
+-- safety net: if the layout code ever fails, fall back to a plain grid so the apps are never lost
+function HOME.legacy()
+  local ww = ICON * 2 + GAPX
+  widgetFriends(24, 62, ww, 132)
+  widgetWeather(24 + ww + GAPX, 62, ww, 132)
+  local n = 0
+  for _, id in ipairs(GRID) do
+    local a = APP_BY_ID[id]
+    if a and not listHas(S.hiddenApps, id) then
+      n = n + 1
+      local c, r = (n - 1) % COLS, math.floor((n - 1) / COLS)
+      appIconDraw(id, a.icon, a.name, 24 + c * (ICON + GAPX), 212 + r * 78, a.c1, a.c2, a.badge and a.badge() or 0, function() openApp(id) end)
+    end
+  end
+end
+
+local function homeScreen()
+  wallpaper()
+  local depth = #clipStack
+  local ok, err = pcall(HOME.draw)
+  if not ok then
+    while #clipStack > depth do popClip() end
+    HOME.err = tostring(err)
+    if HOME.errLogged ~= HOME.err then HOME.errLogged = HOME.err ac.log('HackaPhone home: ' .. HOME.err) end
+    HOME.drag, HOME.edit = nil, false
+    HOME.L = nil
+    S.homeLayout = ''
+    local ok2, err2 = pcall(HOME.legacy)
+    if not ok2 then ac.log('HackaPhone home fallback: ' .. tostring(err2)) end
+  end
+  HOME.dock()
 end
 
 -- ===========================================================================
