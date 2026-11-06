@@ -1,22 +1,22 @@
 {
-  "version": "1.1",
-  "build": 13,
-  "notes": "v1.1: Race mode with challenges, wagers, live tracker, full timing sheet, solo runs and records",
+  "version": "1.1.1",
+  "build": 14,
+  "notes": "Renamed to HackaPhone",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 391176
+      "size": 391284
     },
     {
       "path": "manifest.ini",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/manifest.ini",
-      "size": 866
+      "size": 874
     },
     {
       "path": "README.md",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/README.md",
-      "size": 11044
+      "size": 11052
     },
     {
       "path": "icon.png",

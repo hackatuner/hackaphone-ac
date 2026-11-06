@@ -1,9 +1,9 @@
-# AC Phone v1.1
+# HackaPhone v1.1
 
 An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everything is custom-drawn: no stock AC or ImGui boxes.
 
 ## New in v1.1
-- **Race mode:** challenge any friend with AC Phone to a race from the Race app or their profile. Pick 1/8, 1/4, 1/2 or 1 mile, 1 km, a custom distance, or a speed pull (0-100, 0-200, 0-300, 100-200, 60-130, full pull or your own). They get a notification and a message, and can accept or decline. Add a cash wager and the winner takes the pot.
+- **Race mode:** challenge any friend with HackaPhone to a race from the Race app or their profile. Pick 1/8, 1/4, 1/2 or 1 mile, 1 km, a custom distance, or a speed pull (0-100, 0-200, 0-300, 100-200, 60-130, full pull or your own). They get a notification and a message, and can accept or decline. Add a cash wager and the winner takes the pot.
 - **Countdown and live tracker:** a 5-second countdown with false-start penalty, then a live HUD showing both cars, the gap, time and speed. The phone gets out of the way and comes back with the result.
 - **Full timing sheet:** total time, trap speed, top speed, average, reaction and splits (60 ft, 100 m, 1/8, 1/4, 1/2 mile, 1 km, 0-100, 0-200 and more).
 - **Solo runs and records:** arm a solo run any time. Your best time per format and car is saved. Win/loss record, streak, race history and rematch.
@@ -53,7 +53,7 @@ An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everythi
 - **Cut-Up:** combo tiers (Heating Up, On Fire, Untouchable, God Mode), a last-run summary, and a redesigned action bar (Pro or Minimal) with a PB progress line.
 
 ## New in v0.4
-- **Cut-Up:** a No Hesi-style points system. Weave through traffic for Near Miss, Close Call, Overtake, Oncoming, Lane Split, Slipstream and Speed Trap points. Your multiplier goes up to x20. Slow down to bank your run; crash and you lose it. There's a live leaderboard with everyone on AC Phone (Live, Session and All-time).
+- **Cut-Up:** a No Hesi-style points system. Weave through traffic for Near Miss, Close Call, Overtake, Oncoming, Lane Split, Slipstream and Speed Trap points. Your multiplier goes up to x20. Slow down to bank your run; crash and you lose it. There's a live leaderboard with everyone on HackaPhone (Live, Session and All-time).
 - **Action bar:** an on-screen Cut-Up HUD with your score, a multiplier ring with the combo timer, speed, PB and pop-up events. Drag it wherever you want.
 - **Themes:** 9 looks, each with animated wallpaper art: Classic, Blood Moon (skulls), Gold Rush (guns and a hazard stripe), Neon Tokyo (synthwave grid), Toxic, Inferno, Frostbite, Cash Money and Midnight JDM. Includes a **Thick UI** mode.
 - **Software Update:** the phone updates itself when a new version is published (Settings › Software Update).
@@ -98,6 +98,6 @@ An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everythi
 Copy the `ACPhone` folder into `assettocorsa/apps/lua/`, so you have `assettocorsa/apps/lua/ACPhone/manifest.ini`.
 
 ## Notes
-- Everyone needs AC Phone installed to message each other. Plates and skins also sync with friends using Hacka Plates or Skin Companion.
+- Everyone needs HackaPhone installed to message each other. Plates and skins also sync with friends using Hacka Plates or Skin Companion.
 - Only one camera mode runs at a time. Chase Cam steps aside while you use Camera, Walk or Video.
 - Errors: open CSP's Lua Debug app, or check `Documents/Assetto Corsa/logs/custom_shaders_patch.log`.

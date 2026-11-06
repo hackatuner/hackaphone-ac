@@ -1,5 +1,5 @@
 --[[
-  AC Phone v0.2  -  iPhone-style phone for Assetto Corsa (CSP Lua app)
+  HackaPhone (formerly AC Phone)  -  iPhone-style phone for Assetto Corsa (CSP Lua app)
   by smartnajeeri, built with Claude
 
   Apps: Messages, Friends, Camera, Walk, Video, Chase Cam, Plates, Skins, Weather, App Library, Settings.
@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.1'
-local BUILD = 13
+local VERSION = '1.1.1'
+local BUILD = 14
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -949,7 +949,7 @@ local function avatar(name, x, y, size)
 end
 
 -- ===========================================================================
--- Messaging (compatible with AC Phone v0.1)
+-- Messaging (compatible with HackaPhone v0.1)
 -- ===========================================================================
 
 local GROUP = -1
@@ -2409,7 +2409,7 @@ end
 
 camGrab = function(mode)
   if CAM.grab and CAM.grab:active() then CAM.mode = mode return true end
-  local g, err = ac.grabCamera('AC Phone: ' .. mode)
+  local g, err = ac.grabCamera('HackaPhone: ' .. mode)
   if not g then
     toast('Camera busy', tostring(err or 'Another script is using the camera.'), '⚠️')
     return false
@@ -2440,7 +2440,7 @@ hideOtherApps = function(hide)
   if hide then
     CAM.hiddenApps = {}
     for _, w in ipairs(ac.getAppWindows()) do
-      if w.visible and w.title ~= 'AC Phone' then
+      if w.visible and w.title ~= 'HackaPhone' then
         local acc = ac.accessAppWindow(w.name)
         if acc and acc:valid() then acc:setVisible(false) CAM.hiddenApps[#CAM.hiddenApps + 1] = w.name end
       end
@@ -2720,7 +2720,7 @@ function script.camUpdate()
     elseif CAM.mode == 'video' then updateVideo(dt)
     elseif CAM.mode == 'chase' then updateChase(dt) end
   end)
-  if not ok then ac.log('AC Phone camera error: ' .. tostring(err)) end
+  if not ok then ac.log('HackaPhone camera error: ' .. tostring(err)) end
 end
 
 end
@@ -2767,7 +2767,7 @@ local function appFolder() return ac.getFolder(ac.FolderID.ScriptOrigin) end
 -- refuse anything that isn't a valid, complete AC Phone script
 local function verifyScript(body)
   if type(body) ~= 'string' or #body < 10000 then return false, 'download looks incomplete' end
-  if not body:find('AC Phone', 1, true) then return false, 'not an AC Phone file' end
+  if not (body:find('HackaPhone', 1, true) or body:find('AC Phone', 1, true)) then return false, 'not a HackaPhone file' end
   local compile = loadstring or load
   local fn, err = compile(body, '=ACPhone-update')
   if not fn then return false, 'update has an error: ' .. tostring(err) end
@@ -2846,11 +2846,11 @@ local function checkForUpdates(manual)
     UPD.latest = feed
     UPD.notes = tostring(feed.notes or '')
     if tonumber(feed.build) <= BUILD then
-      updSetState('uptodate', 'AC Phone ' .. VERSION .. ' is up to date')
+      updSetState('uptodate', 'HackaPhone ' .. VERSION .. ' is up to date')
       return
     end
     if S.autoUpdate or manual then installFiles(feed)
-    else updSetState('available', 'AC Phone ' .. tostring(feed.version) .. ' is available') end
+    else updSetState('available', 'HackaPhone ' .. tostring(feed.version) .. ' is available') end
   end)
 end
 
@@ -2870,7 +2870,7 @@ end
 -- after a restart into a new version, say what's new once
 local function announceUpdate()
   if S.updatedTo ~= '' and S.updatedTo == VERSION then
-    notify('AC Phone updated', 'Now on version ' .. VERSION .. '. Tap to see what’s new.', '⬆️', function()
+    notify('HackaPhone updated', 'Now on version ' .. VERSION .. '. Tap to see what’s new.', '⬆️', function()
       if UPD.openScreen then UPD.openScreen() end
     end, { force = true })
     S.updatedTo = ''
@@ -2886,7 +2886,7 @@ end
 --  * Near Miss / Close Call / Overtake / Oncoming / Lane Split / Slipstream / Speed Trap events
 --  * multiplier grows with clean events, combo timer keeps it alive
 --  * slow down to BANK the run; crash and the run is LOST
---  * live leaderboard shared with everyone running AC Phone
+--  * live leaderboard shared with everyone running HackaPhone
 -- ===========================================================================
 
 local HESI = {
@@ -3833,7 +3833,7 @@ function APPMOD.Messages.root()
       y = y + 77
     end
     y = y + 12
-    textBox('Message a friend from the Friends app. Everyone on the server needs AC Phone to receive messages.', 12, 24, y, SW - 24, y + 60, T.label3)
+    textBox('Message a friend from the Friends app. Everyone on the server needs HackaPhone to receive messages.', 12, 24, y, SW - 24, y + 60, T.label3)
     scrollEnd(s, y + 60)
     navBar('Messages', { large = true }, s.y)
   end
@@ -3872,7 +3872,7 @@ local function profileScreen(sid)
     y = y + 38
     textFit(ac.getCarName(idx) or '', 15, SW / 2, y, SW - 40, T.label2, F.r, 0.5)
     y = y + 24
-    if p then text(p.status, 14, SW / 2, y, T.green, F.m, 0.5) else text('No AC Phone', 14, SW / 2, y, T.label3, F.r, 0.5) end
+    if p then text(p.status, 14, SW / 2, y, T.green, F.m, 0.5) else text('No HackaPhone', 14, SW / 2, y, T.label3, F.r, 0.5) end
     y = y + 36
     -- action buttons (iOS contact style)
     local actions = {
@@ -3891,7 +3891,7 @@ local function profileScreen(sid)
           if p then
             XM.race.pending = { sid = sid, name = name }
             APPMOD.openApp('race')
-          else toast('No AC Phone', name .. ' can’t take a challenge', '⚠️') end
+          else toast('No HackaPhone', name .. ' can’t take a challenge', '⚠️') end
         elseif a[2] == 'honk' then sendHonk(sid, name) toast('Honk sent', 'to ' .. name, '📯')
         elseif a[2] == 'watch' then ac.focusCar(idx) toast('Watching', name, '👁')
         else S.favorites = listToggle(S.favorites, name) end
@@ -4559,7 +4559,7 @@ local function listWindows()
   local out = {}
   if not ac.getAppWindows then return out end
   for _, w in ipairs(ac.getAppWindows()) do
-    if w.title and w.title ~= '' and w.title ~= 'AC Phone' and not w.layerDuplicate then out[#out + 1] = w end
+    if w.title and w.title ~= '' and w.title ~= 'HackaPhone' and not w.layerDuplicate then out[#out + 1] = w end
   end
   table.sort(out, function(a, b) return a.title:lower() < b.title:lower() end)
   return out
@@ -4621,9 +4621,9 @@ local function updateScreen()
     local busy = UPD.state == 'checking' or UPD.state == 'downloading' or UPD.state == 'installing'
     local latest = UPD.latest
     local newer = latest and tonumber(latest.build) and tonumber(latest.build) > BUILD
-    text('AC Phone ' .. (newer and tostring(latest.version) or VERSION), 18, 108, y + 24, T.label, F.sb)
+    text('HackaPhone ' .. (newer and tostring(latest.version) or VERSION), 18, 108, y + 24, T.label, F.sb)
     text(newer and 'New version' or ('Installed · build ' .. BUILD), 13, 108, y + 50, T.label2)
-    local status = UPD.message ~= '' and UPD.message or ('AC Phone ' .. VERSION .. ' is installed')
+    local status = UPD.message ~= '' and UPD.message or ('HackaPhone ' .. VERSION .. ' is installed')
     if busy then
       local dots = string.rep('•', math.floor(clock() * 3) % 4)
       status = status .. ' ' .. dots
@@ -4756,7 +4756,7 @@ function APPMOD.Settings.root()
     y = y + 46
     W.row('se.ver', 'Version', y, { value = VERSION })
     W.row('se.srv', 'Server', y + 46, { value = ac.getSim().isOnlineRace and ((ac.getServerName and ac.getServerName()) or 'Online') or 'Offline', last = true })
-    y = W.sectionFooter('AC Phone by smartnajeeri. Messages, plates and skins sync with friends on the same server.', y + 92)
+    y = W.sectionFooter('HackaPhone by smartnajeeri. Messages, plates and skins sync with friends on the same server.', y + 92)
     scrollEnd(s, y + 20)
     navBar('Settings', { large = true }, s.y)
   end
@@ -5693,7 +5693,7 @@ function APPMOD.Livery.root()
     local v = W.toggleRow('lv.sync', 'Share my livery', S.liverySync, y, { first = true })
     if v ~= S.liverySync then S.liverySync = v if v then lvBroadcast() end end
     S.liveryShowOthers = W.toggleRow('lv.oth', 'Show friends’ liveries', S.liveryShowOthers, y + 46, { last = true })
-    y = W.sectionFooter('Friends with AC Phone see your paint live. Swapping skins replaces the livery until you re-apply it.', y + 92)
+    y = W.sectionFooter('Friends with HackaPhone see your paint live. Swapping skins replaces the livery until you re-apply it.', y + 92)
     scrollEnd(s, y + 20)
     navBar('Livery', { large = true }, s.y)
   end
@@ -6158,7 +6158,7 @@ function APPMOD.CutUp.root()
     local rows = boardRows(tab)
     y = HESI.ui.podium(rows, y, tab)
     y = HESI.ui.list(rows, y, tab, 4) + 6
-    y = W.sectionFooter('Everyone with AC Phone shows here live. All-time bests are remembered on this PC.', y)
+    y = W.sectionFooter('Everyone with HackaPhone shows here live. All-time bests are remembered on this PC.', y)
     -- settings
     W.groupBg(y + 6, 2)
     S.hesiOn = W.toggleRow('cu.on', 'Points system', S.hesiOn, y + 6, { first = true, icon = '🔥', iconBg = rgbm(1, 0.4, 0.1, 1) })
@@ -6298,7 +6298,7 @@ function APPMOD.Leaders.root()
       rect(LIST.x, y, LIST.x + LIST.w, y + math.max(1, #list) * 58, T.cell, 14)
       for i, r in ipairs(list) do y = lbRow(r, i, y, HESI.fmt(r.drift), r.car) end
     end
-    y = W.sectionFooter('Standings and laps come from the server for every driver. Cut-Up scores come from drivers running AC Phone.', y + 6)
+    y = W.sectionFooter('Standings and laps come from the server for every driver. Cut-Up scores come from drivers running HackaPhone.', y + 6)
     scrollEnd(s, y + 20)
     navBar('Leaderboards', { large = true }, s.y)
   end
@@ -6458,7 +6458,7 @@ local function sendScreen()
     for _, p in ipairs(getPlayers()) do if p.hasApp then players[#players + 1] = p end end
     y = W.sectionHeader('To', y)
     if #players == 0 then
-      text('Nobody with AC Phone is on the server yet', 14, SW / 2, y + 16, T.label2, F.r, 0.5)
+      text('Nobody with HackaPhone is on the server yet', 14, SW / 2, y + 16, T.label2, F.r, 0.5)
       y = y + 56
     else
       W.groupBg(y, #players)
@@ -6486,7 +6486,7 @@ local function sendScreen()
         navPop()
       end
     end
-    y = W.sectionFooter('Money arrives straight away. You can only send to friends who have AC Phone.', y + 60)
+    y = W.sectionFooter('Money arrives straight away. You can only send to friends who have HackaPhone.', y + 60)
     scrollEnd(s, y + 24)
     navBar('Send money', { back = 'Bank' })
   end
@@ -6569,7 +6569,7 @@ function APPMOD.Bank.root()
       text(money(r.wealth), 15, SW - 32, y + 12, i == 1 and GOLD or T.label2, F.numb, 1)
       y = y + 46
     end
-    y = W.sectionFooter('Net worth counts cash, savings and tokens. Everyone with AC Phone shows up here.', y)
+    y = W.sectionFooter('Net worth counts cash, savings and tokens. Everyone with HackaPhone shows up here.', y)
     scrollEnd(s, y + 24)
     navBar('Bank', { large = true }, s.y)
   end
@@ -6634,7 +6634,7 @@ function APPMOD.Market.root()
       if #rows == 0 then
         glyph('GROUP', SW / 2 - 20, y + 20, 40, T.label3)
         text('No player listings right now', 15, SW / 2, y + 72, T.label2, F.sb, 0.5)
-        text('Friends with AC Phone can list power-ups and tokens here.', 12, SW / 2, y + 96, T.label3, F.r, 0.5)
+        text('Friends with HackaPhone can list power-ups and tokens here.', 12, SW / 2, y + 96, T.label3, F.r, 0.5)
         y = y + 130
       else
         rect(LIST.x, y, LIST.x + LIST.w, y + #rows * 64, T.cell, 14)
@@ -7383,7 +7383,7 @@ function APPMOD.Race.root()
         for _, p in ipairs(getPlayers()) do if p.hasApp then players[#players + 1] = p end end
         if #players == 0 then
           glyph('GROUP', SW / 2 - 18, y + 14, 36, T.label3)
-          text('Nobody with AC Phone is online', 14, SW / 2, y + 60, T.label2, F.sb, 0.5)
+          text('Nobody with HackaPhone is online', 14, SW / 2, y + 60, T.label2, F.sb, 0.5)
           text('Friends need the phone app to take a challenge.', 12, SW / 2, y + 82, T.label3, F.r, 0.5)
           y = y + 112
         else
@@ -8603,7 +8603,7 @@ function PHONE.selfWindow()
   if PHONE.selfAcc and PHONE.selfAcc:valid() then return PHONE.selfAcc end
   if not ac.getAppWindows then return nil end
   for _, w in ipairs(ac.getAppWindows()) do
-    if w.title == 'AC Phone' then PHONE.selfAcc = ac.accessAppWindow(w.name) return PHONE.selfAcc end
+    if w.title == 'HackaPhone' then PHONE.selfAcc = ac.accessAppWindow(w.name) return PHONE.selfAcc end
   end
   return nil
 end
@@ -8624,7 +8624,7 @@ function script.actionBar(dt)
   GS.begin(bk)
   local ok, err = pcall(script.actionBarDraw, dt)
   GS.finish()
-  if not ok then ac.log('AC Phone action bar: ' .. tostring(err)) end
+  if not ok then ac.log('HackaPhone action bar: ' .. tostring(err)) end
 end
 
 function script.actionBarDraw(dt)
