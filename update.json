@@ -1,12 +1,12 @@
 {
-  "version": "1.1.8",
-  "build": 21,
-  "notes": "1.1.8: the phone stays open during races and keeps tracking live data; the island shows race time and speed.",
+  "version": "1.2.0",
+  "build": 22,
+  "notes": "1.2.0: new Car app (lights, colours, doors, bonnet, boot). Phone stays open in races.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 393773
+      "size": 403908
     },
     {
       "path": "manifest.ini",
@@ -16,7 +16,7 @@
     {
       "path": "README.md",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/README.md",
-      "size": 11268
+      "size": 11581
     },
     {
       "path": "icon.png",

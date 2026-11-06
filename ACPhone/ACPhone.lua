@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.1.8'
-local BUILD = 21
+local VERSION = '1.2.0'
+local BUILD = 22
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -93,6 +93,7 @@ local S = ac.storage({
   liveryPresets = '[]',
   skinFavs = '',
   hesiOn = true,
+  carHeadOn = false, carHeadCol = 1, carHeadPow = 1.0, carTailOn = false, carTailCol = 3, carTailPow = 1.0,
   hesiPB = 0,
   hesiTotal = 0,
   hesiRuns = 0,
@@ -3602,7 +3603,7 @@ function WALL.import()
 end
 end
 
-local APPMOD = { Messages = {}, Friends = {}, Camera = {}, Walk = {}, Video = {}, Chase = {}, Plates = {}, Skins = {}, Weather = {}, Library = {}, Settings = {}, Maps = {}, Hud = {}, Livery = {}, Themes = {}, CutUp = {}, Music = {}, Leaders = {}, Bank = {}, Market = {}, Power = {}, Runs = {}, Vault = {}, Race = {} }
+local APPMOD = { Messages = {}, Friends = {}, Camera = {}, Walk = {}, Video = {}, Chase = {}, Plates = {}, Skins = {}, Weather = {}, Library = {}, Settings = {}, Maps = {}, Hud = {}, Livery = {}, Themes = {}, CutUp = {}, Music = {}, Leaders = {}, Bank = {}, Market = {}, Power = {}, Runs = {}, Vault = {}, Race = {}, Car = {} }
 
 -- ===========================================================================
 -- Shared pieces for app screens
@@ -7531,6 +7532,213 @@ end
 R.openUI = function() if APPMOD.openApp then APPMOD.openApp('race') end end
 end
 -- ===========================================================================
+-- CAR app: lights, light colours, doors, bonnet and boot, all from the phone
+-- ===========================================================================
+
+XM.car = { lights = {}, hist = 0 }
+
+do
+local C = XM.car
+-- colour presets for headlight and tail glow
+C.COLORS = {
+  { 'Stock white', rgbm(1.0, 0.96, 0.88, 1) }, { 'Ice blue', rgbm(0.55, 0.78, 1.0, 1) }, { 'Red', rgbm(1.0, 0.1, 0.08, 1) },
+  { 'Orange', rgbm(1.0, 0.5, 0.1, 1) }, { 'Yellow', rgbm(1.0, 0.85, 0.2, 1) }, { 'Green', rgbm(0.2, 1.0, 0.35, 1) },
+  { 'Cyan', rgbm(0.1, 0.95, 1.0, 1) }, { 'Blue', rgbm(0.15, 0.3, 1.0, 1) }, { 'Purple', rgbm(0.65, 0.25, 1.0, 1) },
+  { 'Pink', rgbm(1.0, 0.25, 0.65, 1) }, { 'Lime', rgbm(0.7, 1.0, 0.1, 1) }, { 'Warm', rgbm(1.0, 0.7, 0.35, 1) },
+}
+local LETTERS = 'ABCDEFGHIJKLMNOP'
+function C.lc(c, k) if type(rgb) == 'function' or type(rgb) == 'table' then return rgb(c.r * k, c.g * k, c.b * k) end return rgbm(c.r * k, c.g * k, c.b * k, 1) end
+
+local function car0() return ac.getCar(0) end
+local function safe(fn, ...) local ok, r = pcall(fn, ...) if ok then return r end end
+
+-- ---- actions
+function C.headlights() local c = car0() if c and ac.setHeadlights then ac.setHeadlights(not c.headlightsActive) end end
+function C.highBeams() local c = car0() if c and ac.setHighBeams then ac.setHighBeams(not c.highBeams) end end
+function C.flash() if ac.flashLights then ac.flashLights() end end
+function C.daytime() local c = car0() if c and ac.setDaytimeLights then ac.setDaytimeLights(not c.daytimeRunningLights) end end
+function C.hazards() local c = car0() if c and ac.setTurningLights then ac.setTurningLights(c.hazardLights and 0 or 3) end end
+function C.driverDoor() local c = car0() if c and ac.setDriverDoorOpen then ac.setDriverDoorOpen(0, not c.isDriverDoorOpen, false) end end
+
+-- switches the car exposes (bonnet, boot, doors and the like live here on CSP cars)
+function C.switches()
+  local out, c = {}, car0()
+  if not c or not ac.isExtraSwitchAvailable then return out end
+  for i = 0, 15 do
+    if safe(ac.isExtraSwitchAvailable, i) then
+      local name = safe(ac.getExtraSwitchName, i)
+      if type(name) ~= 'string' or name == '' then name = 'Switch ' .. LETTERS:sub(i + 1, i + 1) end
+      local low = name:lower()
+      local role = (low:find('bonnet') or low:find('hood')) and 'bonnet' or ((low:find('trunk') or low:find('boot') or low:find('tailgate') or low:find('hatch') or low:find('rear lid')) and 'trunk'
+        or (low:find('door') and 'door' or 'other'))
+      out[#out + 1] = { index = i, name = name, role = role, on = c['extra' .. LETTERS:sub(i + 1, i + 1)] and true or false }
+    end
+  end
+  return out
+end
+function C.toggleSwitch(sw) if ac.setExtraSwitch then ac.setExtraSwitch(sw.index, not sw.on) end end
+
+-- ---- colour glow: tinted spot lights ahead of the car, tinted glow at the tail
+local function killLights(kind)
+  for _, l in ipairs(C.lights[kind] or {}) do pcall(l.dispose, l) end
+  C.lights[kind] = nil
+end
+local function makeLight(spot)
+  if not ac.LightSource then return nil end
+  local ok, l = pcall(ac.LightSource, 1)
+  if not ok or not l then return nil end
+  l.spot = spot l.spotSharpness = 0.5 l.specularMultiplier = 0.4 l.diffuseConcentration = 0.5
+  return l
+end
+
+function C.update(dt)
+  local c = car0()
+  if not c or not c.position or not c.look or not c.side then return end
+  local look, side, up = c.look, c.side, c.up or vec3(0, 1, 0)
+  if S.carHeadOn then
+    if not C.lights.head then
+      local a, b = makeLight(42), makeLight(42)
+      if a and b then C.lights.head = { a, b } end
+    end
+    local hs = C.lights.head
+    if hs then
+      local col = C.COLORS[S.carHeadCol] or C.COLORS[1]
+      local on = c.headlightsActive and 1 or 0.0
+      for i, l in ipairs(hs) do
+        local sd = i == 1 and -0.62 or 0.62
+        l.position = c.position + look * 2.1 + side * sd + up * 0.62
+        l.direction = look
+        l.color = C.lc(col[2], on * 14 * S.carHeadPow)
+        l.range, l.fadeAt, l.fadeSmooth = 70, 55, 30
+      end
+    end
+  elseif C.lights.head then killLights('head') end
+  if S.carTailOn then
+    if not C.lights.tail then
+      local a, b = makeLight(130), makeLight(130)
+      if a and b then C.lights.tail = { a, b } end
+    end
+    local ts = C.lights.tail
+    if ts then
+      local col = C.COLORS[S.carTailCol] or C.COLORS[3]
+      local lit = (c.headlightsActive or c.brakeLightsActive or c.daytimeRunningLights) and 1 or 0
+      local boost = c.brakeLightsActive and 2.4 or 1
+      for i, l in ipairs(ts) do
+        local sd = i == 1 and -0.6 or 0.6
+        l.position = c.position - look * 2.2 + side * sd + up * 0.7
+        l.direction = -look
+        l.color = C.lc(col[2], lit * 5 * boost * S.carTailPow)
+        l.range, l.fadeAt, l.fadeSmooth = 14, 10, 8
+      end
+    end
+  elseif C.lights.tail then killLights('tail') end
+end
+
+-- ---- UI
+local function bigTile(id, x, y, w, h, label, sub, on, icon)
+  local fired, pressed = tap(id, x, y, x + w, y + h)
+  local a = anim(id .. '#on', on and 1 or 0, 14)
+  local p = anim(id .. '#p', pressed and 1 or 0, 30)
+  local ac1 = accent()
+  rect(x, y, x + w, y + h, mix(T.cell, A(ac1, 0.32), a), 18)
+  if a > 0.02 then rectLine(x, y, x + w, y + h, A(ac1, 0.9 * a), 18, 1.5) end
+  if p > 0.01 then rect(x, y, x + w, y + h, rgbm(1, 1, 1, 0.1 * p), 18) end
+  text(icon, 22, x + 16, y + 12, mix(T.label2, ac1, a), F.sb)
+  textFit(label, 14, x + 16, y + h - 40, w - 24, T.label, F.sb)
+  textFit(sub, 11, x + 16, y + h - 22, w - 24, on and ac1 or T.label2, F.r)
+  return fired
+end
+
+local function swatches(idKey, y, selected, onPick)
+  local n = #C.COLORS
+  local cols, size, gap = 6, 40, (SW - 32 - 6 * 40) / 5
+  for i, cdef in ipairs(C.COLORS) do
+    local cx, cy = 16 + ((i - 1) % cols) * (size + gap), y + math.floor((i - 1) / cols) * (size + 10)
+    local fired = tap(idKey .. i, cx, cy, cx + size, cy + size)
+    circle(cx + size / 2, cy + size / 2, size / 2 - 2, cdef[2])
+    if selected == i then
+      circleLine(cx + size / 2, cy + size / 2, size / 2 + 1, T.white, 2.5)
+    end
+    if fired then onPick(i) end
+  end
+  return y + math.ceil(n / cols) * (size + 10)
+end
+
+function APPMOD.Car.root()
+  local scr = { title = 'Car' }
+  function scr.draw()
+    bgFill()
+    local c = car0()
+    local s = scrollBegin('carapp', 50, BOTTOM)
+    local y = largeTitle('Car', 96, s.y)
+    textFit((ac.getCarName and ac.getCarName(0) or 'Your car'), 14, 16, y - 10, SW - 32, T.label2, F.m)
+    y = y + 12
+    local gw, gh = (SW - 32 - 10) / 2, 92
+    local tiles = {
+      { 'hl', 'Headlights', c and c.headlightsActive and 'On' or 'Off', c and c.headlightsActive, '●', C.headlights },
+      { 'hb', 'High beams', c and c.highBeams and 'On' or 'Off', c and c.highBeams, '◉', C.highBeams },
+      { 'hz', 'Hazards', c and c.hazardLights and 'Flashing' or 'Off', c and c.hazardLights, '▲', C.hazards },
+      { 'fl', 'Flash', 'Tap to flash', false, '⚡', C.flash },
+      { 'dl', 'Daytime lights', c and c.daytimeRunningLights and 'On' or 'Off', c and c.daytimeRunningLights, '☀', C.daytime },
+      { 'dd', 'Driver door', c and c.isDriverDoorOpen and 'Open' or 'Closed', c and c.isDriverDoorOpen, '▯', C.driverDoor },
+    }
+    for i, t in ipairs(tiles) do
+      local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
+      if bigTile('car.' .. t[1], 16 + col * (gw + 10), y + row * (gh + 10), gw, gh, t[2], t[3], t[4] and true or false, t[5]) then t[6]() end
+    end
+    y = y + 3 * (gh + 10) + 6
+
+    -- colour: headlights
+    y = W.sectionHeader('Headlight colour', y)
+    W.groupBg(y, 1)
+    S.carHeadOn = W.toggleRow('car.hc', 'Custom colour', S.carHeadOn, y, { first = true, last = true })
+    y = y + 52
+    if S.carHeadOn then
+      y = swatches('car.hs', y + 6, S.carHeadCol, function(i) S.carHeadCol = i end)
+      rect(LIST.x, y + 4, LIST.x + LIST.w, y + 78, T.cell, 12)
+      S.carHeadPow = W.sliderRow('car.hp', 'Brightness', S.carHeadPow, 0.2, 2.5, '%.1fx', y + 4, { last = true })
+      y = y + 90
+    end
+    y = W.sectionFooter('Adds a tinted beam in front of the car whenever your headlights are on. Visible to you in the game.', y)
+
+    -- colour: tail lights
+    y = W.sectionHeader('Tail light colour', y + 4)
+    W.groupBg(y, 1)
+    S.carTailOn = W.toggleRow('car.tc', 'Custom glow', S.carTailOn, y, { first = true, last = true })
+    y = y + 52
+    if S.carTailOn then
+      y = swatches('car.ts', y + 6, S.carTailCol, function(i) S.carTailCol = i end)
+      rect(LIST.x, y + 4, LIST.x + LIST.w, y + 78, T.cell, 12)
+      S.carTailPow = W.sliderRow('car.tp', 'Brightness', S.carTailPow, 0.2, 2.5, '%.1fx', y + 4, { last = true })
+      y = y + 90
+    end
+    y = W.sectionFooter('Glows with your headlights and flares when you brake.', y)
+
+    -- body: bonnet, boot, doors
+    y = W.sectionHeader('Bonnet, boot and doors', y + 4)
+    local sw = C.switches()
+    if #sw == 0 then
+      rect(LIST.x, y, LIST.x + LIST.w, y + 86, T.cell, 14)
+      textBox('This car doesn’t expose a bonnet, boot or extra door switch to the phone. The driver door button above still works.', 13, LIST.x + 16, y + 14, LIST.x + LIST.w - 16, y + 80, T.label2)
+      y = y + 98
+    else
+      W.groupBg(y, #sw)
+      for i, o in ipairs(sw) do
+        local icon = o.role == 'bonnet' and 'Bonnet' or (o.role == 'trunk' and 'Boot' or (o.role == 'door' and 'Door' or 'Extra'))
+        local v = W.toggleRow('car.sw' .. o.index, o.name, o.on, y + (i - 1) * 46, { first = i == 1, last = i == #sw, sub = icon })
+        if v ~= o.on then C.toggleSwitch(o) end
+      end
+      y = y + #sw * 46
+      y = W.sectionFooter('Bonnet, boot and extra doors appear here when the car’s mod defines them as switches.', y + 6)
+    end
+    scrollEnd(s, y + 20)
+    navBar('Car', { large = true }, s.y)
+  end
+  return scr
+end
+
+end
+-- ===========================================================================
 -- App registry
 -- ===========================================================================
 
@@ -7555,6 +7763,7 @@ local APPS = {
   { id = 'runs',     name = 'Runs',     icon = '@STOPWATCH', c1 = rgbm(1.00, 0.60, 0.25, 1), c2 = rgbm(0.90, 0.30, 0.10, 1), root = APPMOD.Runs.root },
   { id = 'vault',    name = 'Vault',    icon = '@SAVE', c1 = rgbm(0.25, 0.25, 0.30, 1), c2 = rgbm(0.05, 0.05, 0.08, 1), root = APPMOD.Vault.root },
   { id = 'race',     name = 'Race',     icon = '@FLAG', c1 = rgbm(1.00, 0.30, 0.30, 1), c2 = rgbm(0.65, 0.05, 0.10, 1), root = APPMOD.Race.root, badge = function() return XM.race.state == 'invited_in' and 1 or 0 end },
+  { id = 'car',      name = 'Car',      icon = '@CAR_FRONT', c1 = rgbm(0.30, 0.75, 1.00, 1), c2 = rgbm(0.08, 0.35, 0.80, 1), root = APPMOD.Car.root },
   { id = 'music',    name = 'Music',    icon = '@MUSIC', c1 = rgbm(1.00, 0.36, 0.45, 1), c2 = rgbm(0.86, 0.10, 0.30, 1), root = APPMOD.Music.root },
   { id = 'weather',  name = 'Weather',  icon = '@WEATHER_FEW_CLOUDS', c1 = rgbm(0.45, 0.75, 1.00, 1), c2 = rgbm(0.15, 0.45, 0.90, 1), root = APPMOD.Weather.root },
   { id = 'library',  name = 'Apps',     icon = '@APPS', c1 = rgbm(0.45, 0.50, 1.00, 1), c2 = rgbm(0.25, 0.25, 0.80, 1), root = APPMOD.Library.root },
@@ -7564,7 +7773,7 @@ local APP_BY_ID = {}
 APPMOD.APPS = APPS
 for _, a in ipairs(APPS) do APP_BY_ID[a.id] = a end
 local DOCK = { 'messages', 'music', 'camera', 'settings' }
-local GRID = { 'cutup', 'leaders', 'maps', 'friends', 'walk', 'video', 'chase', 'livery', 'skins', 'plates', 'hud', 'weather', 'themes', 'library', 'runs', 'race', 'power', 'bank', 'market', 'vault' }
+local GRID = { 'cutup', 'leaders', 'maps', 'friends', 'walk', 'video', 'chase', 'livery', 'skins', 'plates', 'hud', 'weather', 'themes', 'library', 'runs', 'race', 'power', 'bank', 'market', 'vault', 'car' }
 
 APPMOD.openApp = function(id) APPMOD.openAppImpl(id) end
 local appIconRects = {}   -- id -> {x, y, size} for open/close zoom
@@ -8813,6 +9022,7 @@ function script.update(dt)
   XM.tick(dt)
   XM.race.update(dt)
   XM.vault.update(dt)
+  pcall(XM.car.update, dt)
   -- walking/video/photo stop if the phone is closed while minimised? keep running; chase handled in camUpdate
 end
 

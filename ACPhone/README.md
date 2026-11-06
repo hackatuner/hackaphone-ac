@@ -2,6 +2,10 @@
 
 An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everything is custom-drawn: no stock AC or ImGui boxes.
 
+## New in v1.2.0
+- **Car app**: headlights, high beams, hazards, flash, daytime lights, driver door, headlight and tail light colours (tinted glow), plus bonnet, boot and extra doors when the car defines them as switches.
+- Phone stays open during races, live lap starts on movement, 15 fonts, Cut-Up standings.
+
 ## New in v1.1.2
 - **Crashing banks your points:** a crash ends the run but every point is banked, counted on the leaderboards, your PB and your cash. Ghost Shield now soaks up one crash and keeps your run going.
 
