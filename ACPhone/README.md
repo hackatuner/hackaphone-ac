@@ -1,6 +1,12 @@
-# AC Phone v1.0
+# AC Phone v1.1
 
 An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everything is custom-drawn: no stock AC or ImGui boxes.
+
+## New in v1.1
+- **Race mode:** challenge any friend with AC Phone to a race from the Race app or their profile. Pick 1/8, 1/4, 1/2 or 1 mile, 1 km, a custom distance, or a speed pull (0-100, 0-200, 0-300, 100-200, 60-130, full pull or your own). They get a notification and a message, and can accept or decline. Add a cash wager and the winner takes the pot.
+- **Countdown and live tracker:** a 5-second countdown with false-start penalty, then a live HUD showing both cars, the gap, time and speed. The phone gets out of the way and comes back with the result.
+- **Full timing sheet:** total time, trap speed, top speed, average, reaction and splits (60 ft, 100 m, 1/8, 1/4, 1/2 mile, 1 km, 0-100, 0-200 and more).
+- **Solo runs and records:** arm a solo run any time. Your best time per format and car is saved. Win/loss record, streak, race history and rematch.
 
 ## New in v1.0
 - **Power-Ups:** a power-up market with 2x, 3x, 5x, 7x and 10x score multipliers plus creative boosts: Ghost Shield (survive a crash), Traffic Magnet, Hyper Combo, Time Warp, Lucky Charm (jackpots), Overdrive, Cash Cow, Quick Bank, Head Start, PB Hunter and Mystery Crates. One multiplier and two boosts per run, used up when the run starts.
@@ -78,6 +84,7 @@ An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everythi
 | **Weather** | Live conditions: air and road temperature, wind, rain, wetness and time. Offline time slider, plus one tap to open Dream Realism Weather or Pure Planner. |
 | **Apps** | Your App Library: switch any installed app on or off. Star apps to put them on the home screen (swipe left). |
 | **Bank / Market / Power-Ups** | Money, savings, live exchange, player trading and the power-up shop. |
+| **Race** | Challenge friends to timed races and pulls, solo runs, records. |
 | **Runs** | Your Cut-Up run log and garage. |
 | **Vault** | Your own music with queue and search. |
 | **Settings** | Status, notifications, phone hotkey, wallpaper and accent colour. |

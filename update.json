@@ -1,12 +1,12 @@
 {
-  "version": "1.0",
-  "build": 12,
-  "notes": "v1.0: Power-Ups, Bank, Market, Runs log, Vault music player, editable camera angles, welcome screen",
+  "version": "1.1",
+  "build": 13,
+  "notes": "v1.1: Race mode with challenges, wagers, live tracker, full timing sheet, solo runs and records",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 355673
+      "size": 391176
     },
     {
       "path": "manifest.ini",
@@ -16,7 +16,7 @@
     {
       "path": "README.md",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/README.md",
-      "size": 10098
+      "size": 11044
     },
     {
       "path": "icon.png",

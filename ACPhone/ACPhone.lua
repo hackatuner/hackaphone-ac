@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.0'
-local BUILD = 12
+local VERSION = '1.1'
+local BUILD = 13
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -101,6 +101,8 @@ local S = ac.storage({
   -- economy
   cash = 1000, saved = 0, savedAt = 0, listSeq = 0, pwEquip = '', title = 'rookie',
   perks = '{}', titles = '{}', hold = '{}', inv = '{}', txLog = '[]', runLog = '[]', myList = '[]',
+  -- race mode
+  raceWins = 0, raceLosses = 0, raceStreak = 0, raceBests = '{}', raceLog = '[]',
   -- camera angles
   shotCfg = '{}', shotPresets = '{}',
   -- welcome screen
@@ -1791,6 +1793,447 @@ function XM.greet(name, sid)
   pcall(sendText, GROUP, 'Welcome to the server, ' .. name .. '!')
 end
 end
+-- ===========================================================================
+-- Race mode: challenge a friend (distance races, speed pulls, rolling starts, cash wagers),
+-- live tracker, full timing sheet, and solo runs with personal records.
+-- UI lives in 4e_apps5.lua. The HUD is drawn in the action bar window.
+-- ===========================================================================
+
+XM.race = { state = 'idle', cur = nil, run = nil, soloResult = nil, hudFade = 0 }
+
+do
+local R = XM.race
+local MILE, QMILE, EMILE = 1609.344, 402.336, 201.168
+
+-- kind 1 = distance (x metres), kind 2 = speed pull (y km/h up to x km/h)
+R.PRESETS = {
+  { id = 'e8',   name = '1/8 mile',  kind = 1, x = EMILE,  y = 0 },
+  { id = 'q4',   name = '1/4 mile',  kind = 1, x = QMILE,  y = 0 },
+  { id = 'h2',   name = '1/2 mile',  kind = 1, x = QMILE * 2, y = 0 },
+  { id = 'm1',   name = '1 mile',    kind = 1, x = MILE,   y = 0 },
+  { id = 'k1',   name = '1 km',      kind = 1, x = 1000,   y = 0 },
+  { id = 'p100', name = '0-100',     kind = 2, x = 100,    y = 0 },
+  { id = 'p200', name = '0-200',     kind = 2, x = 200,    y = 0 },
+  { id = 'p300', name = '0-300',     kind = 2, x = 300,    y = 0 },
+  { id = 'r100', name = '100-200',   kind = 2, x = 200,    y = 100 },
+  { id = 'r60',  name = '60-130',    kind = 2, x = 130,    y = 60 },
+  { id = 'full', name = 'Full pull', kind = 2, x = 250,    y = 0 },
+}
+local DIST_MARKS = { { 18.288, '60 ft' }, { 100, '100 m' }, { EMILE, '1/8 mi' }, { QMILE, '1/4 mi' }, { QMILE * 2, '1/2 mi' }, { 1000, '1 km' }, { MILE, '1 mi' } }
+local SPEED_MARKS = { { 100, '0-100' }, { 160, '0-160' }, { 200, '0-200' }, { 250, '0-250' }, { 300, '0-300' } }
+
+function R.specName(sp)
+  for _, p in ipairs(R.PRESETS) do if p.kind == sp.kind and math.abs(p.x - sp.x) < 0.5 and p.y == sp.y then return p.name end end
+  if sp.kind == 1 then
+    return sp.x >= 1000 and string.format('%.2f km', sp.x / 1000) or string.format('%d m', sp.x)
+  end
+  return sp.y .. '-' .. sp.x
+end
+local function specKey(sp) return sp.kind .. ':' .. math.floor(sp.x) .. ':' .. sp.y end
+function R.specCode(sp) return sp.kind .. ':' .. sp.x .. ':' .. sp.y end
+
+function R.busy() return R.run ~= nil and (R.run.phase == 'countdown' or R.run.phase == 'running') end
+
+-- ---------------------------------------------------------------- network
+local raceSend
+local function send(kind, to, f)
+  if not raceSend then return end
+  f = f or {}
+  local c = R.cur
+  pcall(raceSend, {
+    kind = kind, to = to or (c and c.oppSid) or 0, rid = f.rid or (c and c.rid) or 0, rtype = f.rtype or 0,
+    x = math.floor(f.x or 0), y = math.floor(f.y or 0), wager = math.floor(f.wager or 0),
+    t = f.t or 0, react = f.react or 0, d = f.d or 0, v = math.floor(f.v or 0), flags = f.flags or 0,
+  }, true)
+end
+
+local function reset()
+  R.state, R.cur, R.run = 'idle', nil, nil
+end
+R.reset = reset
+
+local function refund()
+  local c = R.cur
+  if c and c.escrow and c.wager > 0 then XM.add(c.wager, 'Race wager refunded') end
+  if c then c.escrow = false end
+end
+
+local function openUI() if R.openUI then R.openUI() end end
+
+local function newRun(spec, mode)
+  return { spec = spec, mode = mode, phase = 'armed', t = 0, d = 0, v = 0, prevV = 0, top = 0, splits = {}, timing = false,
+    fromZero = spec.y == 0, falseStart = false, car = ac.getCarName(0) or '?' }
+end
+
+function R.startCountdown()
+  local c = R.cur
+  R.run = newRun(c.spec, 'race')
+  R.run.phase = 'countdown'
+  R.run.goAt = clock() + 5.2
+  R.state = 'countdown'
+  c.my, c.outcome = nil, nil
+  c.opp = { d = 0, v = 0, at = clock() }
+  if not ac.isWindowOpen('actionbar') then ac.setWindowOpen('actionbar', true) end
+  if ac.isWindowOpen('main') then ac.setWindowOpen('main', false) end   -- clear the screen for the HUD
+end
+
+local function logRace(c, outcome)
+  local log = XM.jget('raceLog', {})
+  table.insert(log, 1, { t = os.time(), opp = c.oppName, spec = R.specName(c.spec), win = outcome.win, mine = outcome.mine, theirs = outcome.theirs,
+    wager = c.wager, car = ac.getCarName(0) or '?', track = ac.getTrackName and ac.getTrackName() or '', forfeit = outcome.forfeit })
+  while #log > 60 do table.remove(log) end
+  XM.jset('raceLog', log)
+end
+
+-- both times are in: decide it, pay out, keep the books
+local function resolve(forfeitWin)
+  local c = R.cur
+  if not c or c.outcome then return end
+  local mine = c.my and c.my.score
+  local theirs = c.opp and c.opp.fin and c.opp.fin.score
+  local o = { mine = mine, theirs = theirs }
+  if forfeitWin then
+    o.win, o.forfeit = true, true
+  elseif c.my and c.my.dnf then o.win, o.forfeit = false, true
+  elseif c.opp.fin and c.opp.fin.dnf then o.win, o.forfeit = true, true
+  elseif mine and theirs then
+    if math.abs(mine - theirs) < 0.0005 then o.win = nil else o.win = mine < theirs end
+  else return end
+  o.payout = 0
+  if o.win == true then
+    o.payout = c.wager * 2
+    S.raceWins = S.raceWins + 1 S.raceStreak = S.raceStreak + 1
+  elseif o.win == false then
+    S.raceLosses = S.raceLosses + 1 S.raceStreak = 0
+  else
+    o.payout = c.wager
+  end
+  if o.payout > 0 and c.escrow then XM.add(o.payout, o.win and ('Won race vs ' .. c.oppName) or 'Race tie, wager back') end
+  c.escrow = false
+  c.outcome = o
+  logRace(c, o)
+  R.hudFade = 1
+  setTimeout(function()
+    if R.cur == c and R.state == 'finished' then ac.setWindowOpen('main', true) openUI() end
+  end, 5)
+  if o.win == true then notify('You won the race', c.oppName .. (o.payout > 0 and (' · +' .. XM.money(o.payout)) or ''), '🏁', openUI, { force = true })
+  elseif o.win == false then notify('You lost the race', c.oppName .. (c.wager > 0 and (' · -' .. XM.money(c.wager)) or ''), '🏁', openUI, { force = true }) end
+end
+
+local onEvent
+raceSend = ac.OnlineEvent({
+  ac.StructItem.key('acphone.race.v1'),
+  kind = ac.StructItem.byte(), to = ac.StructItem.int32(), rid = ac.StructItem.int32(), rtype = ac.StructItem.byte(),
+  x = ac.StructItem.int32(), y = ac.StructItem.int32(), wager = ac.StructItem.int32(),
+  t = ac.StructItem.float(), react = ac.StructItem.float(), d = ac.StructItem.float(), v = ac.StructItem.int16(), flags = ac.StructItem.byte(),
+}, function(sender, d) onEvent(sender, d) end)
+
+onEvent = function(sender, d)
+  if not sender or sender.index == 0 or d.to ~= mySessionID() then return end
+  local sid = sender.sessionID
+  local name = ac.getDriverName(sender.index) or '?'
+  local c = R.cur
+  if d.kind == 1 then                                         -- invite
+    if R.state ~= 'idle' then send(3, sid, { rid = d.rid, flags = 1 }) return end
+    local spec = { kind = d.rtype, x = d.x, y = d.y }
+    R.cur = { rid = d.rid, role = 'guest', oppSid = sid, oppName = name, spec = spec, wager = d.wager, at = clock(), opp = { d = 0, v = 0, at = clock() } }
+    R.state = 'invited_in'
+    notify(name .. ' wants to race you', R.specName(spec) .. (d.wager > 0 and (' · for ' .. XM.money(d.wager)) or ''), '🏁', openUI, { force = true })
+  elseif not c or c.rid ~= d.rid or c.oppSid ~= sid then
+    return
+  elseif d.kind == 2 then                                     -- accepted
+    if R.state ~= 'invited_out' then return end
+    if c.wager > 0 and not XM.spend(c.wager, 'Race wager vs ' .. name) then
+      send(4, sid) toast('Race cancelled', 'You can’t cover the wager', '⚠️') reset() return
+    end
+    c.escrow = c.wager > 0
+    R.state = 'staging'
+    notify(name .. ' accepted', 'Line up, then hit Start', '🏁', openUI, { force = true })
+  elseif d.kind == 3 then                                     -- declined
+    toast(name .. (d.flags == 1 and ' is busy' or ' declined'), 'No race this time', '🏁')
+    reset()
+  elseif d.kind == 4 then                                     -- cancelled
+    if R.state == 'countdown' or R.state == 'racing' then R.run = nil end
+    refund()
+    toast('Race cancelled', name .. ' called it off', '🏁')
+    reset()
+  elseif d.kind == 5 then                                     -- GO: start the countdown
+    if R.state == 'staging' then R.startCountdown() end
+  elseif d.kind == 6 then                                     -- live progress
+    c.opp.d, c.opp.v, c.opp.at = d.d, d.v, clock()
+  elseif d.kind == 7 then                                     -- they finished
+    if c.opp.fin then return end
+    c.opp.fin = { t = d.t, react = d.react, trap = d.v, dnf = d.flags % 2 == 1, falseStart = d.flags >= 2, score = d.t + (d.flags >= 2 and 1 or 0), top = d.d }
+    if c.my then resolve() end
+  end
+end
+R.handle = onEvent
+
+-- ---------------------------------------------------------------- actions
+function R.challenge(player, spec, wager)
+  if R.state ~= 'idle' or R.busy() then return false end
+  wager = math.max(0, math.floor(wager or 0))
+  if wager > XM.cash() then toast('Not enough cash', 'Lower the wager', '⚠️') return false end
+  R.cur = { rid = math.random(1, 2 ^ 30), role = 'host', oppSid = player.sid, oppName = player.name, spec = spec, wager = wager, at = clock(), opp = { d = 0, v = 0, at = clock() } }
+  R.state = 'invited_out'
+  send(1, player.sid, { rid = R.cur.rid, rtype = spec.kind, x = spec.x, y = spec.y, wager = wager })
+  pcall(sendText, player.sid, 'Race you? ' .. R.specName(spec) .. (wager > 0 and (' for ' .. XM.money(wager)) or '') .. '. Open the Race app to accept.')
+  return true
+end
+function R.accept()
+  local c = R.cur
+  if R.state ~= 'invited_in' or not c then return end
+  if c.wager > 0 and not XM.spend(c.wager, 'Race wager vs ' .. c.oppName) then toast('Not enough cash', 'You can’t cover the wager', '⚠️') R.decline() return end
+  c.escrow = c.wager > 0
+  R.state = 'staging'
+  send(2, c.oppSid)
+end
+function R.decline()
+  local c = R.cur
+  if c then send(3, c.oppSid) end
+  reset()
+end
+function R.cancel()
+  local c = R.cur
+  if not c then return end
+  send(4, c.oppSid)
+  refund()
+  reset()
+end
+function R.start()
+  if R.state ~= 'staging' or R.cur.role ~= 'host' then return end
+  send(5, R.cur.oppSid)
+  R.startCountdown()
+end
+-- quit mid-race: counts as a forfeit
+function R.abort()
+  local c = R.cur
+  if R.run and R.run.mode == 'race' and c then
+    if R.state == 'countdown' then send(4, c.oppSid) refund() reset() return end
+    send(7, c.oppSid, { flags = 1 })
+    R.run.phase = 'done'
+    R.state = 'finished'
+    c.my = { dnf = true }
+    c.finishedAt = clock()
+    resolve()
+  elseif R.run then
+    R.run = nil
+  end
+end
+function R.dismiss() if R.state == 'finished' or R.state == 'idle' then reset() end R.run = nil end
+
+function R.soloArm(spec)
+  if R.busy() or R.state ~= 'idle' then return end
+  R.run = newRun(spec, 'solo')
+  R.soloResult = nil
+  if not ac.isWindowOpen('actionbar') then ac.setWindowOpen('actionbar', true) end
+end
+
+-- ---------------------------------------------------------------- results
+local function finishRun(run, tFin, v, extra)
+  run.phase = 'done'
+  local d = run.spec.kind == 1 and run.spec.x or run.d
+  local res = {
+    t = tFin, trap = v, top = run.top, react = run.react or 0, falseStart = run.falseStart, splits = run.splits,
+    et = tFin - (run.mode == 'race' and run.spec.kind == 1 and (run.react or 0) or 0),
+    avg = tFin > 0 and (d / tFin * 3.6) or 0, car = run.car, track = ac.getTrackName and ac.getTrackName() or '', at = os.time(),
+    spec = run.spec, name = R.specName(run.spec),
+  }
+  res.score = tFin + (run.falseStart and 1 or 0)
+  run.result = res
+  -- personal records (per car)
+  local bests = XM.jget('raceBests', {})
+  local key = specKey(run.spec) .. '|' .. run.car
+  local old = bests[key]
+  if not run.falseStart and (not old or res.t < old.t) then
+    bests[key] = { t = res.t, trap = res.trap, at = res.at, name = res.name, car = run.car, spec = run.spec }
+    XM.jset('raceBests', bests)
+    res.record = true
+  end
+  if run.mode == 'solo' then
+    R.soloResult = res
+    R.hudFade = 1
+    if res.record then toast('New record', res.name .. ' · ' .. string.format('%.3f s', res.t), '🏁') end
+  else
+    local c = R.cur
+    c.my = res
+    R.state = 'finished'
+    for i = 0, 2 do   -- result is sent a few times so a dropped packet can't leave the race unsettled
+      setTimeout(function()
+        if R.cur == c then send(7, c.oppSid, { t = res.t, react = res.react, v = res.trap, d = res.top, flags = res.falseStart and 2 or 0 }) end
+      end, i * 0.8)
+    end
+    c.finishedAt = clock()
+    if c.opp.fin then resolve() end
+  end
+end
+
+-- ---------------------------------------------------------------- per-frame
+function R.update(dt)
+  local c = R.cur
+  -- expire stale invitations
+  if (R.state == 'invited_out' or R.state == 'invited_in') and c and clock() - c.at > 60 then
+    if R.state == 'invited_out' then send(4, c.oppSid) end
+    toast('Race invite expired', c.oppName, '🏁')
+    reset()
+  end
+  -- opponent never finished: after 30s the win is yours
+  if R.state == 'finished' and c and not c.outcome and c.finishedAt and clock() - c.finishedAt > 30 then resolve(true) end
+  R.hudFade = math.max(0, R.hudFade - dt * 0.15)
+  local run = R.run
+  if not run or run.phase == 'done' then return end
+  local sim = ac.getSim()
+  if sim.isPaused or sim.isReplayActive then return end
+  local car = ac.getCar(0)
+  if not car then return end
+  local v = car.speedKmh
+  run.v = v
+
+  if run.phase == 'countdown' then
+    if run.spec.kind == 1 and run.spec.y == 0 and v > 5 and not run.falseStart then
+      run.falseStart = true
+      toast('False start', '+1.0 second penalty', '⚠️')
+    end
+    if clock() >= run.goAt then
+      run.phase = 'running'
+      if run.mode == 'race' then R.state = 'racing' end
+      run.timing = run.spec.kind == 1 or v >= math.max(run.spec.y, 2)
+      run.goFlash = 1
+    end
+    return
+  end
+
+  -- solo: wait for the launch
+  if run.phase == 'armed' then
+    if (run.spec.kind == 1 and v > 2) or (run.spec.kind == 2 and v >= math.max(run.spec.y, 2)) then
+      run.phase, run.timing, run.react = 'running', true, 0
+    else
+      run.prevV = v
+      return
+    end
+  end
+
+  -- pull race: the clock starts as the car passes the start speed
+  if run.phase == 'running' and not run.timing and run.spec.kind == 2 and v >= math.max(run.spec.y, 2) then run.timing = true run.t, run.d = 0, 0 end
+  run.goFlash = math.max(0, (run.goFlash or 0) - dt * 1.5)
+  if not run.timing then run.prevV = v return end
+
+  local prevT, prevD, prevV = run.t, run.d, run.prevV
+  run.t = run.t + dt
+  run.d = run.d + v / 3.6 * dt
+  run.top = math.max(run.top, v)
+  if run.mode == 'race' and run.spec.kind == 1 and not run.react and v > 2 then run.react = run.t end
+  -- timing marks
+  if run.spec.kind == 1 then
+    for _, m in ipairs(DIST_MARKS) do
+      if not run.splits[m[2]] and run.d >= m[1] and prevD < m[1] and m[1] <= run.spec.x + 0.5 then
+        run.splits[m[2]] = { t = prevT + (m[1] - prevD) / math.max(run.d - prevD, 1e-6) * dt, v = v }
+      end
+    end
+  end
+  if run.fromZero then
+    for _, m in ipairs(SPEED_MARKS) do
+      if not run.splits[m[2]] and v >= m[1] and prevV < m[1] and m[1] <= (run.spec.kind == 2 and run.spec.x or 1e9) then
+        run.splits[m[2]] = { t = prevT + (m[1] - prevV) / math.max(v - prevV, 1e-6) * dt, v = m[1] }
+      end
+    end
+  end
+  run.prevV = v
+  -- finish line
+  local finished, tFin = false, run.t
+  if run.spec.kind == 1 and run.d >= run.spec.x then
+    finished, tFin = true, prevT + (run.spec.x - prevD) / math.max(run.d - prevD, 1e-6) * dt
+  elseif run.spec.kind == 2 and v >= run.spec.x then
+    finished, tFin = true, prevT + (run.spec.x - prevV) / math.max(v - prevV, 1e-6) * dt
+  end
+  if finished then finishRun(run, tFin, v) return end
+  -- stuck for too long on a solo/pull
+  if run.t > 180 then R.abort() R.run = nil return end
+  -- live progress to the opponent
+  if run.mode == 'race' and c and clock() - (c.sentAt or 0) > 0.25 then
+    c.sentAt = clock()
+    send(6, c.oppSid, { d = run.spec.kind == 1 and run.d or v, v = v })
+  end
+end
+
+-- ---------------------------------------------------------------- HUD (action bar window)
+local function progressOf(run, d, v)
+  if run.spec.kind == 1 then return clamp(d / run.spec.x, 0, 1) end
+  return clamp((v - run.spec.y) / math.max(1, run.spec.x - run.spec.y), 0, 1)
+end
+
+function R.drawHud(cx)
+  local run = R.run
+  local c = R.cur
+  local ac1 = accent()
+  local white = rgbm(1, 1, 1, 1)
+  if not run then return end
+  if run.phase == 'countdown' then
+    local left = run.goAt - clock()
+    local n = math.ceil(left - 0.2)
+    local label = n >= 1 and tostring(math.min(n, 5)) or 'GO'
+    local frac = left - math.floor(left)
+    local col = n >= 1 and mix(rgbm(1, 0.25, 0.2, 1), rgbm(1, 0.85, 0.2, 1), clamp(1 - n / 5, 0, 1)) or rgbm(0.3, 1, 0.5, 1)
+    for g = 3, 1, -1 do rect(cx - 70 - g * 6, 6 - g * 4, cx + 70 + g * 6, 96 + g * 4, A(col, 0.08 / g), 30 + g * 6) end
+    rect(cx - 70, 6, cx + 70, 96, rgbm(0.03, 0.03, 0.05, 0.85), 30)
+    rectLine(cx - 70, 6, cx + 70, 96, A(col, 0.9), 30, 2)
+    text(label, 64 + math.floor(frac * 8), cx, 14, col, F.numb, 0.5)
+    text(R.specName(run.spec):upper() .. (c and ('  ·  ' .. c.oppName:upper()) or ''), 10, cx, 108, rgbm(1, 1, 1, 0.8), F.b, 0.5)
+    if run.falseStart then text('FALSE START  +1.0s', 12, cx, 124, T.red, F.b, 0.5) end
+    return true
+  end
+  local showing = run.phase == 'running' or run.phase == 'armed' or (run.phase == 'done' and R.hudFade > 0)
+  if not showing then return end
+  local w, h = 470, 112
+  local x1, x2 = cx - w / 2, cx + w / 2
+  local y = 8
+  local done = run.phase == 'done'
+  local res = run.result
+  local win = done and c and c.outcome and c.outcome.win
+  local glow = done and ((c and c.outcome) and (win == true and rgbm(0.3, 1, 0.5, 1) or (win == false and T.red or ac1)) or ac1) or ac1
+  for g = 3, 1, -1 do rect(x1 - g * 4, y - g * 4, x2 + g * 4, y + h + g * 4, A(glow, 0.07 / g), 24 + g * 4) end
+  rect(x1, y, x2, y + h, rgbm(0.03, 0.03, 0.05, 0.88), 24)
+  rectLine(x1, y, x2, y + h, A(glow, 0.7), 24, 1.5)
+  local name = R.specName(run.spec)
+  text(name:upper() .. (run.mode == 'solo' and '  ·  SOLO' or ''), 10, x1 + 20, y + 12, A(glow, 1), F.b)
+  if run.phase == 'armed' then
+    text('READY', 34, cx, y + 30, white, F.numb, 0.5)
+    text(run.spec.kind == 1 and 'Launch when you’re ready, the clock starts when you move' or ('Timer starts at ' .. math.max(run.spec.y, 2) .. ' km/h'), 11, cx, y + 76, rgbm(1, 1, 1, 0.7), F.m, 0.5)
+    return true
+  end
+  local t = done and res.t or run.t
+  text(string.format('%.3f', t), 40, x1 + 20, y + 28, white, F.numb)
+  text(string.format('%d', math.floor(done and res.trap or run.v)), 26, x2 - 76, y + 32, white, F.numb, 1)
+  text(done and 'TRAP KM/H' or 'KM/H', 9, x2 - 20, y + 42, rgbm(1, 1, 1, 0.55), F.b, 1)
+  -- lanes
+  local bx1, bx2 = x1 + 20, x2 - 20
+  local function lane(yy, p, col, label)
+    rect(bx1, yy, bx2, yy + 8, rgbm(1, 1, 1, 0.12), 4)
+    rect(bx1, yy, bx1 + math.max(8, (bx2 - bx1) * p), yy + 8, col, 4)
+    text(label, 9, bx2, yy - 12, rgbm(1, 1, 1, 0.6), F.b, 1)
+  end
+  local myP = done and 1 or progressOf(run, run.d, run.v)
+  if run.mode == 'race' and c then
+    local oppP = c.opp.fin and 1 or progressOf(run, c.opp.d or 0, c.opp.v or 0)
+    lane(y + 84, myP, ac1, 'YOU')
+    lane(y + 98, oppP, rgbm(1, 0.35, 0.3, 1), c.oppName:upper())
+    if not done and run.spec.kind == 1 then
+      local gap = run.d - (c.opp.d or 0)
+      text(string.format('%s%.0f m', gap >= 0 and '+' or '', gap), 14, cx + 10, y + 12, gap >= 0 and T.green or T.red, F.numb, 0.5)
+    end
+  else
+    lane(y + 92, myP, ac1, run.spec.kind == 1 and string.format('%.0f m LEFT', math.max(0, run.spec.x - run.d)) or (math.floor(run.v) .. ' / ' .. run.spec.x))
+  end
+  if done and c and c.outcome then
+    local o = c.outcome
+    local msg = o.win == true and 'YOU WIN' or (o.win == false and 'YOU LOSE' or 'TIE')
+    text(msg, 14, cx + 10, y + 10, glow, F.numb, 0.5)
+  elseif done and res and res.record then
+    text('NEW RECORD', 13, cx + 10, y + 10, rgbm(1, 0.82, 0.25, 1), F.numb, 0.5)
+  end
+  return true
+end
+end
 
 -- ===========================================================================
 -- Live updates: server chat, joins/leaves, laps, personal bests, contact,
@@ -2660,6 +3103,7 @@ local function hesiUpdate(dt)
   HESI.crashFlash = math.max(0, HESI.crashFlash - dt * 1.2)
   HESI.bankFlash = math.max(0, HESI.bankFlash - dt * 1.2)
 
+  if XM.race.busy() then return end   -- racing: Cut-Up sits out
   if not S.hesiOn then if HESI.running then endRun(false) end return end
   if me.isInPitlane then if HESI.running then endRun(false) end return end
 
@@ -3145,7 +3589,7 @@ function WALL.import()
 end
 end
 
-local APPMOD = { Messages = {}, Friends = {}, Camera = {}, Walk = {}, Video = {}, Chase = {}, Plates = {}, Skins = {}, Weather = {}, Library = {}, Settings = {}, Maps = {}, Hud = {}, Livery = {}, Themes = {}, CutUp = {}, Music = {}, Leaders = {}, Bank = {}, Market = {}, Power = {}, Runs = {}, Vault = {} }
+local APPMOD = { Messages = {}, Friends = {}, Camera = {}, Walk = {}, Video = {}, Chase = {}, Plates = {}, Skins = {}, Weather = {}, Library = {}, Settings = {}, Maps = {}, Hud = {}, Livery = {}, Themes = {}, CutUp = {}, Music = {}, Leaders = {}, Bank = {}, Market = {}, Power = {}, Runs = {}, Vault = {}, Race = {} }
 
 -- ===========================================================================
 -- Shared pieces for app screens
@@ -3432,9 +3876,9 @@ local function profileScreen(sid)
     y = y + 36
     -- action buttons (iOS contact style)
     local actions = {
-      { '💬', 'message' }, { '📯', 'honk' }, { '👁', 'watch' }, { listHas(S.favorites, name) and '⭐' or '☆', 'star' },
+      { '💬', 'message' }, { '🏁', 'race' }, { '📯', 'honk' }, { '👁', 'watch' }, { listHas(S.favorites, name) and '⭐' or '☆', 'star' },
     }
-    local bw = (SW - 32 - 24) / 4
+    local bw = (SW - 32 - 32) / 5
     for i, a in ipairs(actions) do
       local x = 16 + (i - 1) * (bw + 8)
       local fired, pressed = tap('pa' .. i, x, y, x + bw, y + 62)
@@ -3443,6 +3887,11 @@ local function profileScreen(sid)
       text(a[2], 12, x + bw / 2, y + 38, accent(), F.m, 0.5)
       if fired then
         if a[2] == 'message' then getThread(sid, name) navPush(threadScreen(sid))
+        elseif a[2] == 'race' then
+          if p then
+            XM.race.pending = { sid = sid, name = name }
+            APPMOD.openApp('race')
+          else toast('No AC Phone', name .. ' can’t take a challenge', '⚠️') end
         elseif a[2] == 'honk' then sendHonk(sid, name) toast('Honk sent', 'to ' .. name, '📯')
         elseif a[2] == 'watch' then ac.focusCar(idx) toast('Watching', name, '👁')
         else S.favorites = listToggle(S.favorites, name) end
@@ -6801,6 +7250,296 @@ APPMOD.Themes.welcome = welcomeEditor
 
 end
 -- ===========================================================================
+-- RACE app: challenge friends, solo timing, records
+-- ===========================================================================
+
+do
+local R = XM.race
+local money = XM.money
+local GOLD = rgbm(1, 0.8, 0.25, 1)
+local RED = rgbm(1, 0.35, 0.3, 1)
+
+local function tile(x, y, w, h, label, value, color)
+  rect(x, y, x + w, y + h, T.cell, 14)
+  if S.thick and T.border then rectLine(x, y, x + w, y + h, T.border, 14, 1.5) end
+  text(label, 9, x + 10, y + 10, T.label2, F.b)
+  textFit(value, 17, x + 10, y + 28, w - 20, color or T.white, F.numb)
+end
+local function tileRow(y, items)
+  local n, gap = #items, 10
+  local w = (SW - 32 - gap * (n - 1)) / n
+  for i, it in ipairs(items) do tile(16 + (i - 1) * (w + gap), y, w, 60, it[1], it[2], it[3]) end
+  return y + 72
+end
+
+local function fmtT(t) return string.format('%.3f s', t or 0) end
+
+local function ago(t)
+  local d = os.time() - t
+  if d < 60 then return 'just now' end
+  if d < 3600 then return math.floor(d / 60) .. ' min ago' end
+  if d < 86400 then return math.floor(d / 3600) .. ' h ago' end
+  return math.floor(d / 86400) .. ' d ago'
+end
+
+-- format picker: presets as chips, plus a custom distance or pull
+local UI = { preset = 2, custom = { kind = 1, x = 800, y = 0 }, wager = 0 }
+local function currentSpec()
+  if UI.preset == 0 then
+    local c = UI.custom
+    return { kind = c.kind, x = math.floor(c.x), y = math.floor(c.y) }
+  end
+  local p = R.PRESETS[UI.preset]
+  return { kind = p.kind, x = p.x, y = p.y }
+end
+
+local function pickSpec(idp, y)
+  y = W.sectionHeader('Format', y)
+  local cols, gap = 3, 8
+  local cw = (SW - 32 - gap * (cols - 1)) / cols
+  local items = {}
+  for i, p in ipairs(R.PRESETS) do items[#items + 1] = { i, p.name } end
+  items[#items + 1] = { 0, 'Custom' }
+  for n, it in ipairs(items) do
+    local c, r = (n - 1) % cols, math.floor((n - 1) / cols)
+    local x, yy = 16 + c * (cw + gap), y + r * 42
+    local sel = UI.preset == it[1]
+    local fired, pressed = tap(idp .. 'f' .. n, x, yy, x + cw, yy + 36)
+    rect(x, yy, x + cw, yy + 36, sel and A(accent(), 0.25) or (pressed and T.cellHi or T.cell), 12)
+    if sel then rectLine(x, yy, x + cw, yy + 36, accent(), 12, 2) end
+    text(it[2], 13, x + cw / 2, yy + 9, sel and T.white or T.label, sel and F.sb or F.m, 0.5)
+    if fired then UI.preset = it[1] end
+  end
+  y = y + math.ceil(#items / cols) * 42 + 4
+  if UI.preset == 0 then
+    local c = UI.custom
+    rect(LIST.x, y, LIST.x + LIST.w, y + (c.kind == 1 and 124 or 190), T.cell, 14)
+    c.kind = W.segmented(idp .. 'ck', { 'Distance', 'Speed pull' }, c.kind, LIST.x + 12, y + 12, LIST.w - 24)
+    if c.kind == 1 then
+      local v, ch = W.sliderRow(idp .. 'cd', 'Distance', c.x, 100, 5000, '%d m', y + 48, { last = true })
+      if ch then c.x = math.floor(v / 50 + 0.5) * 50 end
+      y = y + 134
+    else
+      local v1, ch1 = W.sliderRow(idp .. 'cf', 'From', c.y, 0, 280, '%d km/h', y + 48, {})
+      if ch1 then c.y = math.min(math.floor(v1 / 10 + 0.5) * 10, c.x - 20) end
+      local v2, ch2 = W.sliderRow(idp .. 'ct', 'To', c.x, 40, 340, '%d km/h', y + 112, { last = true })
+      if ch2 then c.x = math.max(math.floor(v2 / 10 + 0.5) * 10, c.y + 20) end
+      y = y + 200
+    end
+  end
+  return currentSpec(), y
+end
+
+-- timing sheet for a finished run
+local function sheet(res, y, other)
+  local items = {
+    { 'TOTAL', fmtT(res.t), GOLD }, { 'TRAP', math.floor(res.trap) .. ' km/h' }, { 'TOP', math.floor(res.top) .. ' km/h' },
+  }
+  y = tileRow(y, items)
+  local items2 = { { 'AVERAGE', math.floor(res.avg) .. ' km/h' }, { 'REACTION', res.spec.kind == 1 and fmtT(res.react) or '—' }, { 'PENALTY', res.falseStart and '+1.000 s' or 'none', res.falseStart and RED or nil } }
+  y = tileRow(y, items2)
+  local names = {}
+  for k, sp in pairs(res.splits or {}) do names[#names + 1] = { k, sp } end
+  table.sort(names, function(a, b) return a[2].t < b[2].t end)
+  if #names > 0 then
+    y = W.sectionHeader('Splits', y)
+    W.groupBg(y, #names)
+    for i, n in ipairs(names) do
+      W.row('sp' .. n[1], n[1], y, { first = i == 1, last = i == #names, value = fmtT(n[2].t) })
+      y = y + 46
+    end
+    y = y + 6
+  end
+  return y
+end
+
+function APPMOD.Race.root()
+  local scr = { title = 'Race' }
+  local tab = 1
+  function scr.draw()
+    if scr.setTab then tab = scr.setTab scr.setTab = nil end
+    local pend = R.pending
+    bgFill()
+    local s = scrollBegin('race', 50, BOTTOM)
+    local y = largeTitle('Race', 96, s.y)
+    local ac1 = accent()
+    text(string.format('%dW  %dL  ·  streak %d', S.raceWins, S.raceLosses, S.raceStreak), 13, SW - 16, y - 14, GOLD, F.numb, 1)
+    tab = W.segmented('rc.tab', { 'Race', 'Solo', 'Records' }, tab, 16, y, SW - 32)
+    y = y + 46
+    local c = R.cur
+    if tab == 1 then
+      if R.state == 'idle' then
+        local spec
+        spec, y = pickSpec('rc.', y)
+        y = W.sectionHeader('Wager', y + 6)
+        rect(LIST.x, y, LIST.x + LIST.w, y + 74, T.cell, 14)
+        local maxW = math.max(100, math.min(XM.cash(), 100000))
+        local v, ch = W.sliderRow('rc.wager', 'Winner takes', UI.wager, 0, maxW, '$%d', y, { last = true })
+        if ch then UI.wager = v < 50 and 0 or math.floor(v / 50 + 0.5) * 50 end
+        UI.wager = math.min(UI.wager, XM.cash())
+        y = y + 86
+        y = W.sectionHeader('Challenge a driver', y)
+        local players = {}
+        for _, p in ipairs(getPlayers()) do if p.hasApp then players[#players + 1] = p end end
+        if #players == 0 then
+          glyph('GROUP', SW / 2 - 18, y + 14, 36, T.label3)
+          text('Nobody with AC Phone is online', 14, SW / 2, y + 60, T.label2, F.sb, 0.5)
+          text('Friends need the phone app to take a challenge.', 12, SW / 2, y + 82, T.label3, F.r, 0.5)
+          y = y + 112
+        else
+          W.groupBg(y, #players, 58)
+          for i, p in ipairs(players) do
+            local yy = y + (i - 1) * 58
+            avatar(p.name, LIST.x + 12, yy + 11, 36)
+            textFit(p.name, 15, LIST.x + 58, yy + 9, LIST.w - 170, T.label, F.sb)
+            textFit(p.car, 12, LIST.x + 58, yy + 32, LIST.w - 170, T.label2)
+            if pend and pend.sid == p.sid then rect(LIST.x + 2, yy + 2, LIST.x + LIST.w - 2, yy + 56, A(accent(), 0.12), 12) end
+            if W.button('rc.ch' .. p.sid, 'Challenge', LIST.x + LIST.w - 100, yy + 12, 88, 34, 'filled') then
+              if R.challenge(p, spec, UI.wager) then toast('Challenge sent', p.name .. ' · ' .. R.specName(spec), '🏁') end
+            end
+            if i < #players then line(LIST.x + 58, yy + 58, LIST.x + LIST.w, yy + 58, T.sep, 1) end
+          end
+          y = y + #players * 58
+        end
+        y = W.sectionFooter('They get a notification and a message. Distance races time from the green light and pulls time from the start speed. Wagers are paid out by the winner’s phone.', y + 6)
+      elseif R.state == 'invited_out' or R.state == 'invited_in' or R.state == 'staging' then
+        local incoming = R.state == 'invited_in'
+        rect(16, y, SW - 16, y + 196, mix(T.cell, ac1, 0.12), 22)
+        rectLine(16, y, SW - 16, y + 196, A(ac1, 0.7), 22, 2)
+        avatar(c.oppName, SW / 2 - 28, y + 16, 56)
+        text(c.oppName, 20, SW / 2, y + 80, T.white, F.b, 0.5)
+        text(R.specName(c.spec), 28, SW / 2, y + 108, ac1, F.numb, 0.5)
+        text(c.wager > 0 and ('for ' .. money(c.wager) .. ' · winner takes ' .. money(c.wager * 2)) or 'no wager, bragging rights', 13, SW / 2, y + 148, T.label2, F.m, 0.5)
+        local status = incoming and 'wants to race you' or (R.state == 'invited_out' and 'Waiting for them to accept…' or (c.role == 'host' and 'Line up, then start the countdown' or ('Waiting for ' .. c.oppName .. ' to start')))
+        text(status, 13, SW / 2, y + 168, T.label, F.sb, 0.5)
+        y = y + 212
+        if incoming then
+          local bw = (SW - 40) / 2
+          if W.button('rc.acc', 'Accept', 16, y, bw, 48, 'filled') then R.accept() end
+          if W.button('rc.dec', 'Decline', 24 + bw, y, bw, 48, 'danger') then R.decline() end
+        elseif R.state == 'staging' and c.role == 'host' then
+          if W.button('rc.go', 'Start countdown', 16, y, SW - 32, 52, 'filled') then R.start() end
+          y = y + 62
+          if W.button('rc.cx', 'Cancel race', 16, y, SW - 32, 40, 'gray') then R.cancel() end
+        else
+          if W.button('rc.cx', 'Cancel', 16, y, SW - 32, 44, 'gray') then R.cancel() end
+        end
+        y = y + 60
+        y = W.sectionFooter('Pull up side by side. The phone closes itself when the countdown starts and the race HUD takes over the top of your screen. Quitting mid-race forfeits it.', y)
+      elseif R.state == 'countdown' or R.state == 'racing' or (R.state == 'finished' and not (c.outcome)) then
+        local run = R.run
+        rect(16, y, SW - 16, y + 150, T.cell, 22)
+        text(R.state == 'finished' and 'You’re done. Waiting for ' .. c.oppName .. '…' or ('Racing ' .. c.oppName), 15, SW / 2, y + 22, T.label, F.sb, 0.5)
+        if c.my then text(fmtT(c.my.t), 40, SW / 2, y + 56, GOLD, F.numb, 0.5)
+        elseif run then text(string.format('%.3f', run.t), 40, SW / 2, y + 56, T.white, F.numb, 0.5) end
+        text(R.specName(c.spec) .. (c.wager > 0 and ('  ·  ' .. money(c.wager) .. ' on it') or ''), 13, SW / 2, y + 116, T.label2, F.m, 0.5)
+        y = y + 166
+        if R.state ~= 'finished' then
+          if W.button('rc.abort', 'Forfeit', 16, y, SW - 32, 44, 'danger') then R.abort() end
+          y = y + 56
+        end
+      else
+        -- finished with a result
+        local o, my, op = c.outcome, c.my, c.opp.fin
+        local col = o.win == true and rgbm(0.3, 1, 0.5, 1) or (o.win == false and RED or ac1)
+        rect(16, y, SW - 16, y + 170, mix(T.cell, col, 0.16), 22)
+        rectLine(16, y, SW - 16, y + 170, A(col, 0.8), 22, 2)
+        text(o.win == true and 'YOU WIN' or (o.win == false and 'YOU LOSE' or 'TIE'), 34, SW / 2, y + 16, col, F.numb, 0.5)
+        if o.forfeit then text(o.win and (c.oppName .. ' didn’t finish') or 'You forfeited', 12, SW / 2, y + 62, T.label2, F.m, 0.5) end
+        local half = (SW - 32) / 2
+        text('YOU', 10, 16 + half / 2, y + 86, T.label2, F.b, 0.5)
+        text(o.mine and fmtT(o.mine) or 'DNF', 22, 16 + half / 2, y + 104, T.white, F.numb, 0.5)
+        text(c.oppName:upper(), 10, 16 + half * 1.5, y + 86, T.label2, F.b, 0.5)
+        text(o.theirs and fmtT(o.theirs) or 'DNF', 22, 16 + half * 1.5, y + 104, T.white, F.numb, 0.5)
+        if o.payout and o.payout > 0 then text((o.win and '+' or '') .. money(o.payout), 14, SW / 2, y + 142, rgbm(0.35, 0.95, 0.55, 1), F.numb, 0.5)
+        elseif c.wager > 0 and o.win == false then text('-' .. money(c.wager), 14, SW / 2, y + 142, RED, F.numb, 0.5) end
+        y = y + 186
+        local bw = (SW - 40) / 2
+        if W.button('rc.rematch', 'Rematch', 16, y, bw, 46, 'filled') then
+          local spec, wager, who = c.spec, c.wager, { sid = c.oppSid, name = c.oppName }
+          R.dismiss() R.challenge(who, spec, wager)
+        end
+        if W.button('rc.done', 'Done', 24 + bw, y, bw, 46, 'gray') then R.dismiss() end
+        y = y + 62
+        if my and my.splits then y = sheet(my, y) end
+      end
+    elseif tab == 2 then
+      local run = R.run
+      local armed = run and run.mode == 'solo' and run.phase ~= 'done'
+      local spec
+      if not armed then spec, y = pickSpec('so.', y) end
+      if armed then
+        rect(16, y, SW - 16, y + 150, mix(T.cell, ac1, 0.12), 22)
+        rectLine(16, y, SW - 16, y + 150, A(ac1, 0.7), 22, 2)
+        text(run.phase == 'armed' and 'READY' or string.format('%.3f', run.t), 44, SW / 2, y + 22, T.white, F.numb, 0.5)
+        text(R.specName(run.spec) .. (run.phase == 'armed' and '  ·  go when you’re ready' or ('  ·  ' .. math.floor(run.v) .. ' km/h')), 14, SW / 2, y + 90, ac1, F.sb, 0.5)
+        text('Close the phone and drive. The timer shows at the top of your screen.', 12, SW / 2, y + 116, T.label2, F.r, 0.5)
+        y = y + 164
+        if W.button('so.cancel', 'Cancel', 16, y, SW - 32, 44, 'gray') then R.abort() end
+        y = y + 56
+      else
+        y = y + 8
+        if W.button('so.arm', 'Arm ' .. R.specName(spec) .. ' run', 16, y, SW - 32, 52, 'filled') then
+          R.soloArm(spec)
+          if ac.isWindowOpen('main') then ac.setWindowOpen('main', false) end
+        end
+        y = y + 64
+      end
+      local res = R.soloResult
+      if res and not armed then
+        y = W.sectionHeader('Last run', y + 4)
+        rect(16, y, SW - 16, y + 96, mix(T.cell, res.record and GOLD or ac1, 0.12), 20)
+        text(res.record and 'NEW PERSONAL RECORD' or res.name:upper(), 10, 34, y + 14, res.record and GOLD or ac1, F.b)
+        text(fmtT(res.t), 38, 34, y + 32, T.white, F.numb)
+        textFit(res.car, 12, SW - 34, y + 20, 140, T.label2, F.m, 1)
+        y = y + 110
+        y = sheet(res, y)
+      end
+      y = W.sectionFooter('Solo runs and races are saved to Records with the car you used.', y)
+    else
+      y = tileRow(y, { { 'WINS', tostring(S.raceWins), rgbm(0.35, 0.95, 0.55, 1) }, { 'LOSSES', tostring(S.raceLosses), RED }, { 'STREAK', tostring(S.raceStreak), GOLD } })
+      local bests = XM.jget('raceBests', {})
+      local list = {}
+      for k, b in pairs(bests) do list[#list + 1] = b end
+      table.sort(list, function(a, b) return (a.at or 0) > (b.at or 0) end)
+      y = W.sectionHeader('Personal records', y)
+      if #list == 0 then
+        text('No records yet. Arm a solo run or race a friend.', 13, SW / 2, y + 16, T.label2, F.r, 0.5)
+        y = y + 50
+      else
+        W.groupBg(y, #list)
+        for i, b in ipairs(list) do
+          W.row('rec' .. i, b.name, y, { first = i == 1, last = i == #list, sub = (b.car or '') .. ' · ' .. ago(b.at or 0) })
+          text(fmtT(b.t), 16, SW - 32, y + 13, GOLD, F.numb, 1)
+          y = y + 46
+        end
+      end
+      local log = XM.jget('raceLog', {})
+      y = W.sectionHeader('Race history', y + 12)
+      if #log == 0 then
+        text('No races yet', 13, SW / 2, y + 12, T.label2, F.r, 0.5)
+        y = y + 44
+      else
+        W.groupBg(y, #log)
+        for i, r in ipairs(log) do
+          W.row('rl' .. i, 'vs ' .. (r.opp or '?'), y, { first = i == 1, last = i == #log, sub = (r.spec or '') .. ' · ' .. (r.car or '') .. ' · ' .. ago(r.t) })
+          local col = r.win == true and rgbm(0.35, 0.95, 0.55, 1) or (r.win == false and RED or T.label2)
+          text(r.win == true and 'WIN' or (r.win == false and 'LOSS' or 'TIE'), 14, SW - 32, y + 6, col, F.numb, 1)
+          if (r.wager or 0) > 0 then text(money(r.wager), 11, SW - 32, y + 26, T.label2, F.num, 1) end
+          y = y + 46
+        end
+      end
+    end
+    scrollEnd(s, y + 24)
+    navBar('Race', { large = true }, s.y)
+  end
+  return scr
+end
+
+-- bring the phone back to the result when a race ends
+R.openUI = function() if APPMOD.openApp then APPMOD.openApp('race') end end
+end
+-- ===========================================================================
 -- App registry
 -- ===========================================================================
 
@@ -6824,6 +7563,7 @@ local APPS = {
   { id = 'power',    name = 'Power-Ups', icon = '@CONSTELLATION', c1 = rgbm(0.80, 0.45, 1.00, 1), c2 = rgbm(0.50, 0.15, 0.90, 1), root = APPMOD.Power.root },
   { id = 'runs',     name = 'Runs',     icon = '@STOPWATCH', c1 = rgbm(1.00, 0.60, 0.25, 1), c2 = rgbm(0.90, 0.30, 0.10, 1), root = APPMOD.Runs.root },
   { id = 'vault',    name = 'Vault',    icon = '@SAVE', c1 = rgbm(0.25, 0.25, 0.30, 1), c2 = rgbm(0.05, 0.05, 0.08, 1), root = APPMOD.Vault.root },
+  { id = 'race',     name = 'Race',     icon = '@FLAG', c1 = rgbm(1.00, 0.30, 0.30, 1), c2 = rgbm(0.65, 0.05, 0.10, 1), root = APPMOD.Race.root, badge = function() return XM.race.state == 'invited_in' and 1 or 0 end },
   { id = 'music',    name = 'Music',    icon = '@MUSIC', c1 = rgbm(1.00, 0.36, 0.45, 1), c2 = rgbm(0.86, 0.10, 0.30, 1), root = APPMOD.Music.root },
   { id = 'weather',  name = 'Weather',  icon = '@WEATHER_FEW_CLOUDS', c1 = rgbm(0.45, 0.75, 1.00, 1), c2 = rgbm(0.15, 0.45, 0.90, 1), root = APPMOD.Weather.root },
   { id = 'library',  name = 'Apps',     icon = '@APPS', c1 = rgbm(0.45, 0.50, 1.00, 1), c2 = rgbm(0.25, 0.25, 0.80, 1), root = APPMOD.Library.root },
@@ -6833,7 +7573,7 @@ local APP_BY_ID = {}
 APPMOD.APPS = APPS
 for _, a in ipairs(APPS) do APP_BY_ID[a.id] = a end
 local DOCK = { 'messages', 'music', 'camera', 'settings' }
-local GRID = { 'cutup', 'leaders', 'maps', 'friends', 'walk', 'video', 'chase', 'livery', 'skins', 'plates', 'hud', 'weather', 'themes', 'library', 'runs', 'power', 'bank', 'market', 'vault' }
+local GRID = { 'cutup', 'leaders', 'maps', 'friends', 'walk', 'video', 'chase', 'livery', 'skins', 'plates', 'hud', 'weather', 'themes', 'library', 'runs', 'race', 'power', 'bank', 'market', 'vault' }
 
 APPMOD.openApp = function(id) APPMOD.openAppImpl(id) end
 local appIconRects = {}   -- id -> {x, y, size} for open/close zoom
@@ -7893,6 +8633,7 @@ function script.actionBarDraw(dt)
   local ac1 = accent()
   local gold = rgbm(1, 0.78, 0.22, 1)
   local minimal = S.barStyle == 2
+  if XM.race.drawHud(cx) then return end
   -- event feed: clean chips rising above the bar
   for i, f in ipairs(HESI.feed) do
     local a = clamp(1 - (f.t - 2) / 1, 0, 1) * clamp(f.t * 8, 0, 1)
@@ -8019,6 +8760,7 @@ function script.update(dt)
   UPD.tick()
   HESI.update(dt)
   XM.tick(dt)
+  XM.race.update(dt)
   XM.vault.update(dt)
   -- walking/video/photo stop if the phone is closed while minimised? keep running; chase handled in camUpdate
 end
