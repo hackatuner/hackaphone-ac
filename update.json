@@ -1,0 +1,27 @@
+{
+  "version": "0.4",
+  "build": 4,
+  "notes": "Cut-Up points system with live leaderboard and action bar. 9 themes with animated wallpapers and Thick UI. Automatic software updates.",
+  "files": [
+    {
+      "path": "ACPhone.lua",
+      "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
+      "size": 209816
+    },
+    {
+      "path": "manifest.ini",
+      "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/manifest.ini",
+      "size": 866
+    },
+    {
+      "path": "README.md",
+      "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/README.md",
+      "size": 4904
+    },
+    {
+      "path": "icon.png",
+      "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/icon.png",
+      "size": 2202
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+# AC Phone v0.4
+
+An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everything is custom-drawn: no stock AC or ImGui boxes.
+
+## New in v0.4
+- **Cut-Up:** a No Hesi-style points system. Weave through traffic for Near Miss, Close Call, Overtake, Oncoming, Lane Split, Slipstream and Speed Trap points. Your multiplier goes up to x20. Slow down to bank your run; crash and you lose it. There's a live leaderboard with everyone on AC Phone (Live, Session and All-time).
+- **Action bar:** an on-screen Cut-Up HUD with your score, a multiplier ring with the combo timer, speed, PB and pop-up events. Drag it wherever you want.
+- **Themes:** 9 looks, each with animated wallpaper art: Classic, Blood Moon (skulls), Gold Rush (guns and a hazard stripe), Neon Tokyo (synthwave grid), Toxic, Inferno, Frostbite, Cash Money and Midnight JDM. Includes a **Thick UI** mode.
+- **Software Update:** the phone updates itself when a new version is published (Settings › Software Update).
+
+## New in v0.3
+- **Lock screen** with a big clock, a live lap card, Now Playing and your latest notifications. Swipe up to open.
+- **Live updates:** friends joining or leaving, every lap, personal bests, contact with other cars, low fuel, position changes, weather changes and new sessions.
+- **Dynamic Island Live Activity** shows your lap timer and delta while you drive, or REC, Walk or music. Tap it to expand.
+- **Notification Centre:** tap the left side of the status bar or pull down from the top-left.
+- **Control Centre:** tap the right side of the status bar. It has Chase Cam, Do Not Disturb, notifications, Live Activities, Now Playing, Clean screen, Walk, Camera, Lock, server info, HUD and Maps.
+- **Now Playing:** whatever is playing in Windows (Spotify, YouTube and so on) shows on the lock screen, in Control Centre, in the island and on home page 2.
+- **Server chat:** the real AC chat now appears in Messages, and you can reply from the phone.
+
+## Apps
+| App | What it does |
+|---|---|
+| **Maps** | Live track map with you and your friends on it. Drag, zoom, follow, and tap a friend to watch or text them. Teleport list for servers that have teleport points. |
+| **Livery** | Repaint your car live with a main colour, a second colour and patterns (Fade, Stripes, Checker, Camo, Carbon). Finishes: Gloss, Matte, Metallic, Pearl, Chrome. Paint rims and calipers too. Choose a full repaint or a tint over your skin. Friends see it online. |
+| **HUD** | Switch your HUD apps on and off, use Clean screen, and save or load full layouts (which apps are open and where). |
+| **Messages** | Group chat with everyone on the server, plus private chats. Banners pop in when messages arrive. |
+| **Friends** | Who's on the server, their car, status and distance. Profile pages with Message, Honk, Watch and Star. |
+| **Camera** | Free photo camera. WASD/QE to fly, right mouse to look, scroll to zoom, then press the shutter. The phone hides itself for the shot. |
+| **Walk** | Step out next to your car and walk around in first person. WASD, Shift to run, Space to jump. |
+| **Video** | Cinematic shots for filming friends: Orbit, Drone, Tracking, Flyby, Low Chase, Handheld. Press REC, and the phone shrinks to a REC bar. Capture with OBS or ShadowPlay. |
+| **Chase Cam** | Adjustable chase camera with presets (Street, Drift, Low, Cinema) and sliders for distance, height, FOV, stiffness, look ahead, speed zoom and corner tilt. It can replace only AC's chase view. |
+| **Plates** | Custom license plates with a live preview, flags, quick picks, favourites and recents. Syncs online. Works with Hacka Plates. |
+| **Skins** | Browse your car's skins with preview images and swap in-game. Syncs online. Works with Skin Companion. |
+| **Weather** | Live conditions: air and road temperature, wind, rain, wetness and time. Offline time slider, plus one tap to open Dream Realism Weather or Pure Planner. |
+| **Apps** | Your App Library: switch any installed app on or off. Star apps to put them on the home screen (swipe left). |
+| **Settings** | Status, notifications, phone hotkey, wallpaper and accent colour. |
+
+## Using it
+- Open it from the app bar on the right of the screen, or press **Ctrl+P** (change the key in Settings › Phone key).
+- To go home, tap or swipe up on the bar at the bottom of the screen. To go back, tap the **‹** at the top left.
+- Drag the phone by its top edge or frame.
+
+## Install (everyone in the crew)
+Copy the `ACPhone` folder into `assettocorsa/apps/lua/`, so you have `assettocorsa/apps/lua/ACPhone/manifest.ini`.
+
+## Notes
+- Everyone needs AC Phone installed to message each other. Plates and skins also sync with friends using Hacka Plates or Skin Companion.
+- Only one camera mode runs at a time. Chase Cam steps aside while you use Camera, Walk or Video.
+- Errors: open CSP's Lua Debug app, or check `Documents/Assetto Corsa/logs/custom_shaders_patch.log`.
