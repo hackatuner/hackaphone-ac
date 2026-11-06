@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '0.9'
-local BUILD = 11
+local VERSION = '1.0'
+local BUILD = 12
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -98,6 +98,16 @@ local S = ac.storage({
   hesiRuns = 0,
   hesiNear = 0,
   hesiCrew = '{}',
+  -- economy
+  cash = 1000, saved = 0, savedAt = 0, listSeq = 0, pwEquip = '', title = 'rookie',
+  perks = '{}', titles = '{}', hold = '{}', inv = '{}', txLog = '[]', runLog = '[]', myList = '[]',
+  -- camera angles
+  shotCfg = '{}', shotPresets = '{}',
+  -- welcome screen
+  welcomeOn = true, welcomeTitle = 'Welcome back', welcomeTag = 'Let\'s cut some traffic', welcomeStyle = 1, welcomeSecs = 5,
+  welcomeStats = true, greetJoin = true, welcomeSeen = '',
+  -- music
+  musicArtMode = 2, musicBlurAmt = 0.6, vaultFolder = '', vaultVol = 0.85, vaultShuffle = false, vaultRepeat = 1, vaultLast = '', untitledUrl = 'https://untitled.stream',
   actionBar = true,
   favorites = '',          -- favourite drivers
   pinnedApps = '',         -- app library windows pinned to home page 2
@@ -1290,6 +1300,497 @@ SK.skinActive = skinActive
 SK.skinApply = skinApply
 SK.skinSet = skinSet
 end
+-- ===========================================================================
+-- Economy: wallet, bank, run payouts, power-ups, exchange, player-to-player trading,
+-- and the run log. UI lives in 4d_apps4.lua. Hooks into Cut-Up via XM.eco.*
+-- ===========================================================================
+
+local XM = { rich = {}, listings = {}, pending = {} }
+
+do
+local jcache = {}
+local function jget(key, def)
+  local raw = S[key]
+  local c = jcache[key]
+  if c and c.raw == raw then return c.v end
+  local ok, v = pcall(JSON.parse, raw)
+  if not ok or type(v) ~= 'table' then v = def or {} end
+  jcache[key] = { raw = raw, v = v }
+  return v
+end
+local function jset(key, v)
+  local raw = JSON.stringify(v)
+  S[key] = raw
+  jcache[key] = { raw = raw, v = v }
+end
+XM.jget, XM.jset = jget, jset
+
+local function money(n)
+  n = math.floor((n or 0) + 0.5)
+  local neg = n < 0
+  local out = tostring(math.abs(n)):reverse():gsub('(%d%d%d)', '%1,'):reverse()
+  if out:sub(1, 1) == ',' then out = out:sub(2) end
+  return (neg and '-$' or '$') .. out
+end
+XM.money = money
+
+-- ---------------------------------------------------------------- power-up catalogue
+-- kind: mult (one slot) | fx (two slots) | crate (opens into another power-up)
+local RC = { rgbm(0.62, 0.68, 0.78, 1), rgbm(0.30, 0.65, 1, 1), rgbm(0.75, 0.40, 1, 1), rgbm(1, 0.72, 0.2, 1) }
+XM.rarityName = { 'COMMON', 'RARE', 'EPIC', 'LEGENDARY' }
+XM.rarityColor = RC
+local PW = {
+  { id = 'x2',    name = 'Ember',        tag = '2x', kind = 'mult', val = 2,  price = 800,   rarity = 1, icon = '@BURN',   desc = 'Every point you score is doubled for your next run.' },
+  { id = 'x3',    name = 'Blaze',        tag = '3x', kind = 'mult', val = 3,  price = 2000,  rarity = 2, icon = '@BURN',   desc = 'Triple points for your next run.' },
+  { id = 'x5',    name = 'Inferno',      tag = '5x', kind = 'mult', val = 5,  price = 6500,  rarity = 3, icon = '@BURN',   desc = 'Five times the points. Big PBs live here.' },
+  { id = 'x7',    name = 'Supernova',    tag = '7x', kind = 'mult', val = 7,  price = 16000, rarity = 3, icon = '@BURN',   desc = 'Seven times the points for one run.' },
+  { id = 'x10',   name = 'Singularity',  tag = '10x', kind = 'mult', val = 10, price = 45000, rarity = 4, icon = '@BURN',  desc = 'Ten times the points. One run to bend the leaderboard.' },
+  { id = 'shield', name = 'Ghost Shield', tag = 'SAVE', kind = 'fx', price = 1500,  rarity = 2, icon = '@PADLOCK', desc = 'Survive one crash: the run banks at 60% instead of vanishing.' },
+  { id = 'magnet', name = 'Traffic Magnet', tag = '+60%', kind = 'fx', price = 1200, rarity = 2, icon = '@TARGET', desc = 'Near misses, close calls, oncoming and lane splits pay 60% more.' },
+  { id = 'hyper',  name = 'Hyper Combo', tag = '+4s', kind = 'fx', price = 1000, rarity = 1, icon = '@STOPWATCH', desc = 'Your combo timer lasts 4 seconds longer.' },
+  { id = 'warp',   name = 'Time Warp',   tag = 'SLOW', kind = 'fx', price = 2200, rarity = 3, icon = '@HOURGLASS', desc = 'Your combo timer drains at less than half speed.' },
+  { id = 'lucky',  name = 'Lucky Charm', tag = '777', kind = 'fx', price = 1800, rarity = 2, icon = '@DICE', desc = '1 in 8 events hits a JACKPOT and pays triple.' },
+  { id = 'drive',  name = 'Overdrive',   tag = '2x MULT', kind = 'fx', price = 2500, rarity = 3, icon = '@UP_ALT', desc = 'Your multiplier climbs twice as fast.' },
+  { id = 'cow',    name = 'Cash Cow',    tag = '$x3', kind = 'fx', price = 1400, rarity = 2, icon = '@STATS', desc = 'The run pays triple cash, whether you bank it or crash it.' },
+  { id = 'quick',  name = 'Quick Bank',  tag = '1.2s', kind = 'fx', price = 700, rarity = 1, icon = '@FLAG', desc = 'Banking takes 1.2 seconds of slow driving instead of 3.' },
+  { id = 'head',   name = 'Head Start',  tag = 'x3', kind = 'fx', price = 900, rarity = 1, icon = '@NAVIGATION', desc = 'Your run begins at a x3 multiplier.' },
+  { id = 'hunter', name = 'PB Hunter',   tag = '+25%', kind = 'fx', price = 3500, rarity = 3, icon = '@TROPHY', desc = 'Beat your personal best and the banked score gets 25% extra.' },
+  { id = 'crate',  name = 'Mystery Crate', tag = '???', kind = 'crate', price = 1000, rarity = 2, icon = '@APPS', desc = 'Opens into a random power-up. Might be a Singularity.' },
+}
+local PW_BY = {}
+for i, p in ipairs(PW) do p.n = i PW_BY[p.id] = p end
+XM.PW, XM.PW_BY = PW, PW_BY
+
+-- exchange assets
+local TOKENS = {
+  { id = 'CUT',  n = 101, name = 'Cut Coin',     base = 120, vol = 0.45, ph = 0.0, icon = '@BURN' },
+  { id = 'NOS',  n = 102, name = 'Nitro Bond',   base = 400, vol = 0.24, ph = 2.1, icon = '@FUEL' },
+  { id = 'GRIP', n = 103, name = 'Grip Index',   base = 45,  vol = 0.12, ph = 4.2, icon = '@STEERING_WHEEL' },
+}
+local TOK_BY = {}
+for _, t in ipairs(TOKENS) do TOK_BY[t.id] = t TOK_BY[t.n] = t end
+XM.TOKENS, XM.TOK_BY = TOKENS, TOK_BY
+
+-- every phone computes the same price from the clock, so the whole server sees one live market
+local function priceAt(t, ts)
+  local x = ts
+  local w = 0.5 * math.sin(x / 1800 * 6.2832 + t.ph) + 0.3 * math.sin(x / 420 * 6.2832 + t.ph * 1.7) + 0.2 * math.sin(x / 95 * 6.2832 + t.ph * 2.3)
+  return math.max(t.base * 0.2, t.base * (1 + t.vol * w))
+end
+XM.priceAt = priceAt
+function XM.price(id) return priceAt(TOK_BY[id], os.time()) end
+
+-- titles (cosmetic products)
+XM.TITLES = {
+  { id = 'rookie',  name = 'Rookie',        price = 0 },
+  { id = 'weaver',  name = 'Traffic Weaver', price = 4000 },
+  { id = 'ghost',   name = 'Ghost',          price = 15000 },
+  { id = 'king',    name = 'Cut-Up King',    price = 40000 },
+  { id = 'untouch', name = 'Untouchable',    price = 90000 },
+  { id = 'whale',   name = 'Whale',          price = 250000 },
+}
+XM.PERKS = {
+  { id = 'pay',  name = 'Better Payouts', desc = '+10% cash from every run, per level.', icon = '@STATS', base = 3000, max = 5 },
+  { id = 'int',  name = 'Savings Boost',  desc = '+0.1% interest per minute, per level.', icon = '@UP_ALT', base = 4000, max = 5 },
+  { id = 'luck', name = 'Crate Luck',     desc = 'Mystery Crates favour rarer power-ups, per level.', icon = '@DICE', base = 5000, max = 5 },
+}
+function XM.perkLevel(id) return (jget('perks', {})[id] or 0) end
+function XM.perkPrice(p) return p.base * 2 ^ XM.perkLevel(p.id) end
+function XM.buyPerk(p)
+  local lv = XM.perkLevel(p.id)
+  if lv >= p.max then return false end
+  if not XM.spend(XM.perkPrice(p), p.name .. ' level ' .. (lv + 1)) then return false end
+  local t = jget('perks', {}) t[p.id] = lv + 1 jset('perks', t)
+  return true
+end
+function XM.buyTitle(tt)
+  local owned = jget('titles', { rookie = true })
+  if owned[tt.id] then S.title = tt.id return true end
+  if not XM.spend(tt.price, 'Title: ' .. tt.name) then return false end
+  owned[tt.id] = true jset('titles', owned) S.title = tt.id
+  return true
+end
+function XM.titleName()
+  for _, t in ipairs(XM.TITLES) do if t.id == S.title then return t.name end end
+  return 'Rookie'
+end
+
+-- ---------------------------------------------------------------- wallet
+function XM.cash() return math.floor(S.cash) end
+function XM.log(a, why)
+  local log = jget('txLog', {})
+  table.insert(log, 1, { t = os.time(), a = math.floor(a), why = why })
+  while #log > 60 do table.remove(log) end
+  jset('txLog', log)
+end
+function XM.add(a, why)
+  a = math.floor(a)
+  if a == 0 then return end
+  S.cash = XM.cash() + a
+  XM.log(a, why or 'Income')
+end
+function XM.spend(a, why)
+  a = math.floor(a)
+  if a > XM.cash() then return false end
+  S.cash = XM.cash() - a
+  XM.log(-a, why or 'Purchase')
+  return true
+end
+
+-- ---------------------------------------------------------------- inventory + loadout
+function XM.have(id) return (jget('inv', {})[id] or 0) end
+function XM.give(id, n)
+  local inv = jget('inv', {})
+  inv[id] = math.max(0, (inv[id] or 0) + n)
+  if inv[id] == 0 then inv[id] = nil end
+  jset('inv', inv)
+end
+function XM.buyPW(p, qty)
+  qty = qty or 1
+  if not XM.spend(p.price * qty, p.name .. (qty > 1 and (' x' .. qty) or '')) then return false end
+  XM.give(p.id, qty)
+  return true
+end
+
+local function equippedList()
+  local out = {}
+  for id in tostring(S.pwEquip):gmatch('[^,]+') do if PW_BY[id] then out[#out + 1] = id end end
+  return out
+end
+XM.equippedList = equippedList
+function XM.isEquipped(id)
+  for _, e in ipairs(equippedList()) do if e == id then return true end end
+  return false
+end
+function XM.toggleEquip(id)
+  local p = PW_BY[id]
+  if not p or p.kind == 'crate' then return end
+  local list = equippedList()
+  for i, e in ipairs(list) do if e == id then table.remove(list, i) S.pwEquip = table.concat(list, ',') return end end
+  if p.kind == 'mult' then
+    for i = #list, 1, -1 do if PW_BY[list[i]].kind == 'mult' then table.remove(list, i) end end
+  else
+    local fx = 0
+    for _, e in ipairs(list) do if PW_BY[e].kind == 'fx' then fx = fx + 1 end end
+    if fx >= 2 then
+      for i, e in ipairs(list) do if PW_BY[e].kind == 'fx' then table.remove(list, i) break end end
+    end
+  end
+  list[#list + 1] = id
+  S.pwEquip = table.concat(list, ',')
+end
+
+-- loot table for crates; Crate Luck pushes weight towards rarer drops
+function XM.openCrate()
+  if XM.have('crate') < 1 then return nil end
+  XM.give('crate', -1)
+  local luck = XM.perkLevel('luck')
+  local weights = { x2 = 22, x3 = 11, x5 = 3.5 + luck, x7 = 1.2 + luck * 0.6, x10 = 0.4 + luck * 0.4, shield = 10, magnet = 10, hyper = 12,
+    warp = 5, lucky = 8, drive = 5, cow = 10, quick = 14, head = 12, hunter = 4 }
+  local total = 0
+  for _, w in pairs(weights) do total = total + w end
+  local r = math.random() * total
+  local pick = 'x2'
+  for _, p in ipairs(PW) do
+    local w = weights[p.id]
+    if w then r = r - w if r <= 0 then pick = p.id break end end
+  end
+  XM.give(pick, 1)
+  return PW_BY[pick]
+end
+
+-- called when a run starts: arm the equipped power-ups, spend one of each
+function XM.armRun()
+  local fx = { names = {} }
+  for _, id in ipairs(equippedList()) do
+    local p = PW_BY[id]
+    if p and XM.have(id) > 0 then
+      XM.give(id, -1)
+      if p.kind == 'mult' then fx.mult = p.val else fx[id] = true end
+      fx.names[#fx.names + 1] = p.tag == p.name and p.name or (p.kind == 'mult' and p.tag or p.name)
+      if XM.have(id) == 0 then -- ran out: unequip so the loadout stays honest
+        local list = equippedList()
+        for i, e in ipairs(list) do if e == id then table.remove(list, i) break end end
+        S.pwEquip = table.concat(list, ',')
+      end
+    end
+  end
+  return fx
+end
+
+-- ---------------------------------------------------------------- run payouts + log
+function XM.payoutFor(score, crashed, fx)
+  local base
+  if crashed then base = 25 + score * 0.012 else base = 60 + score * 0.04 end
+  local mult = 1 + 0.1 * XM.perkLevel('pay')
+  if fx and fx.cow then mult = mult * 3 end
+  return math.floor(base * mult)
+end
+
+function XM.recordRun(r)
+  local log = jget('runLog', {})
+  table.insert(log, 1, r)
+  while #log > 120 do table.remove(log) end
+  jset('runLog', log)
+end
+
+-- ---------------------------------------------------------------- savings + exchange
+function XM.saved() return math.floor(S.saved) end
+function XM.deposit(a)
+  a = math.floor(math.min(a, XM.cash()))
+  if a <= 0 then return end
+  S.cash = XM.cash() - a
+  S.saved = XM.saved() + a
+  XM.log(-a, 'To savings')
+end
+function XM.withdraw(a)
+  a = math.floor(math.min(a, XM.saved()))
+  if a <= 0 then return end
+  S.saved = XM.saved() - a
+  S.cash = XM.cash() + a
+  XM.log(a, 'From savings')
+end
+function XM.rate() return 0.004 + 0.001 * XM.perkLevel('int') end   -- per minute
+local function accrue()
+  local now = os.time()
+  if S.savedAt <= 0 then S.savedAt = now return end
+  local mins = math.floor((now - S.savedAt) / 60)
+  if mins >= 1 then
+    S.savedAt = S.savedAt + mins * 60
+    if XM.saved() > 0 then
+      mins = math.min(mins, 600)   -- offline earnings stop after 10 hours
+      local before = XM.saved()
+      S.saved = math.floor(before * (1 + XM.rate()) ^ mins)
+      XM.interestEarned = (XM.interestEarned or 0) + (S.saved - before)
+    end
+  end
+end
+
+function XM.holdings() return jget('hold', {}) end
+function XM.holdValue()
+  local v = 0
+  for id, h in pairs(XM.holdings()) do if TOK_BY[id] then v = v + h.n * XM.price(id) end end
+  return v
+end
+function XM.buyToken(id, qty)
+  local px = XM.price(id)
+  local cost = math.ceil(px * qty * 1.01)
+  if not XM.spend(cost, 'Bought ' .. qty .. ' ' .. id) then return false end
+  local h = XM.holdings()
+  local e = h[id] or { n = 0, cost = 0 }
+  e.n, e.cost = e.n + qty, e.cost + cost
+  h[id] = e jset('hold', h)
+  return true
+end
+function XM.sellToken(id, qty)
+  local h = XM.holdings()
+  local e = h[id]
+  if not e or e.n < qty then return false end
+  local gain = math.floor(XM.price(id) * qty * 0.99)
+  local costPart = e.cost * (qty / e.n)
+  e.n, e.cost = e.n - qty, e.cost - costPart
+  if e.n <= 0 then h[id] = nil end
+  jset('hold', h)
+  XM.add(gain, 'Sold ' .. qty .. ' ' .. id)
+  return true, gain - costPart
+end
+function XM.netWorth() return XM.cash() + XM.saved() + XM.holdValue() end
+
+-- ---------------------------------------------------------------- online: payments + player market
+local ecoSend
+local pendingBuy = {}
+local function myName() return ac.getDriverName(0) or 'You' end
+local function itemName(n)
+  if TOK_BY[n] then return TOK_BY[n].name end
+  for _, p in ipairs(PW) do if p.n == n then return p.name end end
+  return 'item'
+end
+local function itemId(n)
+  if TOK_BY[n] then return TOK_BY[n].id end
+  for _, p in ipairs(PW) do if p.n == n then return p.id end end
+end
+XM.itemName, XM.itemId = itemName, itemId
+
+local function giveItem(n, qty)
+  if TOK_BY[n] then
+    local h = XM.holdings()
+    local e = h[TOK_BY[n].id] or { n = 0, cost = 0 }
+    e.n, e.cost = e.n + qty, e.cost + XM.price(TOK_BY[n].id) * qty
+    h[TOK_BY[n].id] = e jset('hold', h)
+  else
+    XM.give(itemId(n), qty)
+  end
+end
+local function takeItem(n, qty)
+  if TOK_BY[n] then
+    local h = XM.holdings()
+    local e = h[TOK_BY[n].id]
+    if not e or e.n < qty then return false end
+    e.cost = e.cost * ((e.n - qty) / e.n)
+    e.n = e.n - qty
+    if e.n <= 0 then h[TOK_BY[n].id] = nil end
+    jset('hold', h)
+    return true
+  end
+  if XM.have(itemId(n)) < qty then return false end
+  XM.give(itemId(n), -qty)
+  return true
+end
+XM.giveItem, XM.takeItem = giveItem, takeItem
+
+local function send(d)
+  if not ecoSend then return end
+  d.kind = d.kind or 0
+  d.to, d.id, d.item, d.qty, d.price = d.to or 0, d.id or 0, d.item or 0, d.qty or 0, d.price or 0
+  d.wealth = math.floor(XM.netWorth())
+  pcall(ecoSend, d, true)
+end
+
+ecoSend = ac.OnlineEvent({
+  ac.StructItem.key('acphone.eco.v1'),
+  kind = ac.StructItem.byte(), to = ac.StructItem.int32(), id = ac.StructItem.int32(),
+  item = ac.StructItem.byte(), qty = ac.StructItem.int16(), price = ac.StructItem.int32(), wealth = ac.StructItem.int32(),
+}, function(sender, d)
+  if not sender or sender.index == 0 then return end
+  local name = ac.getDriverName(sender.index) or '?'
+  local sid = sender.sessionID
+  XM.rich[sid] = { name = name, wealth = d.wealth, at = clock() }
+  local me = mySessionID()
+  if d.kind == 2 and d.to == me then                      -- money sent to me
+    XM.add(d.price, 'From ' .. name)
+    notify(name .. ' sent you ' .. money(d.price), 'Added to your balance', '💾', nil, { force = true })
+  elseif d.kind == 3 then                                 -- listing (re)announced
+    XM.listings[sid .. ':' .. d.id] = { sid = sid, id = d.id, seller = name, item = d.item, qty = d.qty, price = d.price, at = clock() }
+  elseif d.kind == 4 then
+    XM.listings[sid .. ':' .. d.id] = nil
+  elseif d.kind == 5 and d.to == me then                  -- someone wants to buy my listing
+    local mine = jget('myList', {})
+    for i, l in ipairs(mine) do
+      if l.id == d.id then
+        table.remove(mine, i) jset('myList', mine)
+        XM.add(l.price, 'Sold ' .. itemName(l.item) .. ' to ' .. name)
+        send({ kind = 6, to = sid, id = l.id, item = l.item, qty = l.qty, price = l.price })
+        send({ kind = 4, id = l.id })
+        notify(name .. ' bought ' .. itemName(l.item), '+' .. money(l.price), '💾', nil, { force = true })
+        return
+      end
+    end
+    send({ kind = 6, to = sid, id = d.id, item = d.item, qty = 0, price = d.price })   -- already gone
+  elseif d.kind == 6 and d.to == me then                  -- result of my purchase
+    local key = sid .. ':' .. d.id
+    local pend = pendingBuy[key]
+    if not pend then return end
+    pendingBuy[key] = nil
+    if d.qty > 0 then
+      giveItem(d.item, d.qty)
+      XM.log(0, 'Got ' .. d.qty .. 'x ' .. itemName(d.item) .. ' from ' .. name)
+      notify('Purchase complete', d.qty .. 'x ' .. itemName(d.item) .. ' from ' .. name, '💾', nil, { force = true })
+    else
+      XM.add(pend.price, 'Refund: listing gone')
+      toast('Too slow', 'That listing was already sold. You were refunded.', '⚠️')
+    end
+    XM.listings[key] = nil
+  end
+end)
+
+function XM.sendMoney(sid, name, amount)
+  amount = math.floor(amount)
+  if amount <= 0 or not XM.spend(amount, 'Sent to ' .. name) then return false end
+  send({ kind = 2, to = sid, price = amount })
+  return true
+end
+
+function XM.listItem(n, qty, price)
+  if qty < 1 or price < 1 then return false end
+  if not takeItem(n, qty) then return false end
+  local mine = jget('myList', {})
+  S.listSeq = (S.listSeq + 1) % 30000
+  mine[#mine + 1] = { id = S.listSeq, item = n, qty = qty, price = math.floor(price) }
+  jset('myList', mine)
+  send({ kind = 3, id = S.listSeq, item = n, qty = qty, price = math.floor(price) })
+  return true
+end
+function XM.unlist(id)
+  local mine = jget('myList', {})
+  for i, l in ipairs(mine) do
+    if l.id == id then
+      table.remove(mine, i) jset('myList', mine)
+      giveItem(l.item, l.qty)
+      send({ kind = 4, id = id })
+      return true
+    end
+  end
+end
+function XM.buyListing(l)
+  if pendingBuy[l.sid .. ':' .. l.id] then return false end
+  if not XM.spend(l.price, 'Buying ' .. itemName(l.item)) then return false end
+  pendingBuy[l.sid .. ':' .. l.id] = { price = l.price, at = clock() }
+  send({ kind = 5, to = l.sid, id = l.id, item = l.item, price = l.price })
+  return true
+end
+function XM.isPending(l) return pendingBuy[l.sid .. ':' .. l.id] ~= nil end
+
+function XM.marketRows()
+  local rows = {}
+  for k, l in pairs(XM.listings) do
+    if clock() - l.at > 75 then XM.listings[k] = nil else rows[#rows + 1] = l end
+  end
+  table.sort(rows, function(a, b) return (a.price / math.max(1, a.qty)) < (b.price / math.max(1, b.qty)) end)
+  return rows
+end
+function XM.richList()
+  local rows = { { name = myName(), wealth = XM.netWorth(), me = true } }
+  for sid, r in pairs(XM.rich) do
+    if clock() - r.at < 120 then rows[#rows + 1] = { name = r.name, wealth = r.wealth } end
+  end
+  table.sort(rows, function(a, b) return a.wealth > b.wealth end)
+  return rows
+end
+
+local tickAt, listAt, accAt = 0, 0, 0
+function XM.tick(dt)
+  local now = clock()
+  if now > accAt then accAt = now + 5 accrue() end
+  -- refund purchases that never got an answer (seller left the server)
+  for key, p in pairs(pendingBuy) do
+    if now - p.at > 15 then
+      pendingBuy[key] = nil
+      XM.add(p.price, 'Refund: seller offline')
+    end
+  end
+  if not ac.getSim().isOnlineRace then return end
+  if now > tickAt then tickAt = now + 12 send({ kind = 1 }) end
+  if now > listAt then
+    listAt = now + 20
+    for _, l in ipairs(jget('myList', {})) do send({ kind = 3, id = l.id, item = l.item, qty = l.qty, price = l.price }) end
+  end
+end
+
+-- Cut-Up hooks (called from 2d_hesi.lua)
+function XM.onRunEnd(summary, crashed, fx)
+  local pay = XM.payoutFor(summary.score, crashed, fx)
+  if (not crashed) and summary.pb and fx and fx.hunter then pay = math.floor(pay * 1.25) end
+  XM.add(pay, crashed and 'Crash relief' or (summary.pb and 'Run banked · new PB' or 'Run banked'))
+  summary.pay = pay
+  local car = ac.getCarName(0) or '?'
+  XM.recordRun({
+    t = os.time(), score = summary.score, crashed = crashed and true or false, pb = summary.pb and true or false, car = car,
+    track = ac.getTrackName and ac.getTrackName() or '', top = math.floor(summary.top or 0), avg = math.floor(summary.avg or 0),
+    time = math.floor(summary.time or 0), mult = summary.maxMult or 1, near = summary.near or 0, close = summary.close or 0,
+    split = summary.split or 0, oncoming = summary.oncoming or 0, pay = pay, boost = fx and fx.mult or 1,
+    fx = fx and table.concat(fx.names or {}, ', ') or '',
+  })
+  return pay
+end
+
+-- say hi to a new player, but only from one phone (the longest-connected) so chat isn't flooded
+function XM.greet(name, sid)
+  if not (S.greetJoin and S.welcomeOn) or not presence[sid] then return end
+  local me = mySessionID()
+  for other in pairs(presence) do if other < me and other ~= sid then return end end
+  pcall(sendText, GROUP, 'Welcome to the server, ' .. name .. '!')
+end
+end
 
 -- ===========================================================================
 -- Live updates: server chat, joins/leaves, laps, personal bests, contact,
@@ -1344,6 +1845,7 @@ if ac.onClientConnected then
       local fav = listHas(S.favorites, name)
       notify(name .. ' joined', (ac.getCarName(carIndex) or '') .. (fav and ' ⭐' or ''), '👋', nil, { quietWhenClosed = not fav })
       if PL.text ~= '' then PL.broadcast() end
+      XM.greet(name, sessionID)
     end, 3)
   end)
 end
@@ -1607,58 +2109,91 @@ walkStart = function()
 end
 
 -- ---------------------------------------------------------------- video shots
+local function prm(key, label, mn, mx, def, fmt) return { key = key, label = label, min = mn, max = mx, def = def, fmt = fmt or '%.1f' } end
+local COMMON = { prm('roll', 'Roll', -30, 30, 0, '%.0f°'), prm('shake', 'Camera shake', 0, 1, 0, '%.2f') }
+local function withCommon(list) for _, c in ipairs(COMMON) do list[#list + 1] = c end return list end
 VIDEO_SHOTS = {
-  { id = 'orbit',   name = 'Orbit',     icon = '🔄' },
-  { id = 'drone',   name = 'Drone',     icon = '🚁' },
-  { id = 'tracker', name = 'Tracking',  icon = '🎯' },
-  { id = 'flyby',   name = 'Flyby',     icon = '💨' },
-  { id = 'low',     name = 'Low Chase', icon = '📉' },
-  { id = 'free',    name = 'Handheld',  icon = '🎥' },
+  { id = 'orbit',   name = 'Orbit',     icon = '🔄', params = withCommon({
+      prm('radius', 'Distance', 2.5, 30, 6.5, '%.1f m'), prm('height', 'Height', -0.5, 12, 1.2, '%.1f m'),
+      prm('speed', 'Spin speed', -1.5, 1.5, 0.35, '%.2f'), prm('fov', 'Field of view', 12, 100, 42, '%.0f°'), prm('lookH', 'Aim height', -1, 2.5, 0, '%.1f m') }) },
+  { id = 'drone',   name = 'Drone',     icon = '🚁', params = withCommon({
+      prm('back', 'Distance behind', 4, 60, 14, '%.0f m'), prm('height', 'Height', 1, 40, 7, '%.0f m'), prm('side', 'Side offset', -20, 20, 0, '%.0f m'),
+      prm('smooth', 'Follow smoothing', 0.4, 8, 2.2, '%.1f'), prm('fov', 'Field of view', 12, 100, 38, '%.0f°'), prm('lookH', 'Aim height', -1, 2.5, 0, '%.1f m') }) },
+  { id = 'tracker', name = 'Tracking',  icon = '🎯', params = withCommon({
+      prm('side', 'Side distance', -14, 14, 4.2, '%.1f m'), prm('ahead', 'Forward offset', -12, 12, 0.5, '%.1f m'), prm('height', 'Height', -0.5, 6, 0, '%.1f m'),
+      prm('smooth', 'Follow smoothing', 1, 15, 6, '%.1f'), prm('fov', 'Field of view', 12, 100, 46, '%.0f°'), prm('lookH', 'Aim height', -1, 2.5, 0, '%.1f m') }) },
+  { id = 'flyby',   name = 'Flyby',     icon = '💨', params = withCommon({
+      prm('ahead', 'Distance ahead', 5, 70, 15, '%.0f m'), prm('side', 'Side distance', 2, 25, 7, '%.0f m'), prm('height', 'Height', 0.3, 8, 1.1, '%.1f m'),
+      prm('lead', 'Lead time', 0, 5, 2.2, '%.1f s'), prm('zoomK', 'Zoom amount', 400, 4000, 1800, '%.0f'), prm('fovMin', 'Tightest zoom', 5, 30, 8, '%.0f°'), prm('fovMax', 'Widest', 20, 100, 55, '%.0f°') }) },
+  { id = 'low',     name = 'Low Chase', icon = '📉', params = withCommon({
+      prm('back', 'Distance behind', 2, 20, 5.5, '%.1f m'), prm('height', 'Height', -1, 4, -0.35, '%.2f m'), prm('side', 'Side offset', -6, 6, 0.9, '%.1f m'),
+      prm('smooth', 'Follow smoothing', 1, 15, 8, '%.1f'), prm('fov', 'Field of view', 15, 110, 55, '%.0f°'), prm('lookH', 'Aim height', -1, 2.5, 0, '%.1f m') }) },
+  { id = 'free',    name = 'Handheld',  icon = '🎥', params = withCommon({
+      prm('fov', 'Field of view', 10, 110, 50, '%.0f°') }) },
 }
+-- values for a shot: saved edits fall back to defaults
+local function shotVal(shotId, key)
+  local cfg = XM.jget('shotCfg', {})[shotId]
+  if cfg and cfg[key] ~= nil then return cfg[key] end
+  for _, sh in ipairs(VIDEO_SHOTS) do
+    if sh.id == shotId then for _, p in ipairs(sh.params) do if p.key == key then return p.def end end end
+  end
+  return 0
+end
+CAM.shotVal = shotVal
 
 local function updateVideo(dt)
   local car = ac.getCar(CAM.target) or ac.getCar(0)
   local sim = ac.getSim()
-  local center = car.position + car.up * 0.6
   local shot = CAM.shot
+  local v = function(k) return shotVal(shot, k) end
+  local center = car.position + car.up * (0.6 + ((shot ~= 'free') and v('lookH') or 0))
   if shot == 'free' then updatePhoto(dt) return end
-  local pos, fov = CAM.pos, 45
+  local pos, fov = CAM.pos, v('fov')
   if shot == 'orbit' then
-    CAM.orbit = CAM.orbit + dt * 0.35
-    local r = 6.5
-    pos = center + vec3(math.sin(CAM.orbit) * r, 1.2, math.cos(CAM.orbit) * r)
-    fov = 42
+    CAM.orbit = CAM.orbit + dt * v('speed')
+    local r = v('radius')
+    pos = center + vec3(math.sin(CAM.orbit) * r, v('height'), math.cos(CAM.orbit) * r)
   elseif shot == 'drone' then
     local back = car.look:clone() back.y = 0
     if back:length() < 0.01 then back = vec3(0, 0, 1) end
     back = back:normalize()
-    local target = center - back * 14 + UP * 7
-    CAM.pos = CAM.pos:distance(target) > 60 and target or CAM.pos + (target - CAM.pos) * (1 - math.exp(-2.2 * dt))
-    pos, fov = CAM.pos, 38
+    local target = center - back * v('back') + UP * v('height') + car.side * v('side')
+    CAM.pos = CAM.pos:distance(target) > 80 and target or CAM.pos + (target - CAM.pos) * (1 - math.exp(-v('smooth') * dt))
+    pos = CAM.pos
   elseif shot == 'tracker' then
-    local target = center + car.side * 4.2 + car.look * 0.5
-    CAM.pos = CAM.pos:distance(target) > 30 and target or CAM.pos + (target - CAM.pos) * (1 - math.exp(-6 * dt))
-    pos, fov = CAM.pos, 46
+    local target = center + car.side * v('side') + car.look * v('ahead') + UP * v('height')
+    CAM.pos = CAM.pos:distance(target) > 40 and target or CAM.pos + (target - CAM.pos) * (1 - math.exp(-v('smooth') * dt))
+    pos = CAM.pos
   elseif shot == 'low' then
-    local target = center - car.look * 5.5 - car.up * 0.35 + car.side * 0.9
-    CAM.pos = CAM.pos:distance(target) > 30 and target or CAM.pos + (target - CAM.pos) * (1 - math.exp(-8 * dt))
-    pos, fov = CAM.pos, 55
+    local target = center - car.look * v('back') + UP * v('height') + car.side * v('side')
+    CAM.pos = CAM.pos:distance(target) > 40 and target or CAM.pos + (target - CAM.pos) * (1 - math.exp(-v('smooth') * dt))
+    pos = CAM.pos
   elseif shot == 'flyby' then
     local d = CAM.pos:distance(center)
     local behind = (center - CAM.pos):dot(car.look) > 8
-    if d > 90 or behind or CAM.flybyInit ~= CAM.target then
+    if d > 110 or behind or CAM.flybyInit ~= CAM.target then
       CAM.flybyInit = CAM.target
-      local ahead = center + car.velocity * 2.2 + car.look * 15 + car.side * (math.random() > 0.5 and 7 or -7)
+      local ahead = center + car.velocity * v('lead') + car.look * v('ahead') + car.side * (math.random() > 0.5 and v('side') or -v('side'))
       local g = groundAt(ahead)
-      CAM.pos = vec3(ahead.x, (g or ahead.y) + 1.1, ahead.z)
+      CAM.pos = vec3(ahead.x, (g or ahead.y) + v('height'), ahead.z)
     end
     pos = CAM.pos
-    fov = clamp(1800 / math.max(d, 5), 8, 55)
+    fov = clamp(v('zoomK') / math.max(d, 5), v('fovMin'), v('fovMax'))
   end
   local g = groundAt(pos)
   if g and pos.y < g + 0.2 then pos = vec3(pos.x, g + 0.2, pos.z) end
+  local shake = v('shake')
   local look = (center - pos):normalize()
-  setTransform(pos, look, UP, fov)
+  if shake > 0 then
+    local tt = clock()
+    pos = pos + vec3(math.sin(tt * 7.3), math.sin(tt * 9.1 + 1), math.sin(tt * 6.7 + 2)) * 0.035 * shake
+    look = (look + vec3(math.sin(tt * 5.1), math.sin(tt * 6.3 + 1), math.sin(tt * 4.7 + 2)) * 0.006 * shake):normalize()
+  end
+  local roll = math.rad(v('roll'))
+  local up = UP
+  if roll ~= 0 then up = (UP + look:clone():cross(UP):normalize() * math.tan(roll)):normalize() end
+  setTransform(pos, look, up, fov)
 end
 
 videoStart = function()
@@ -1915,7 +2450,7 @@ local HESI = {
   running = false, run = 0, mult = 1, combo = 0, comboMax = 7, slowT = 0, events = {}, feed = {},
   cars = {}, lastPassSide = 0, lastPassAt = -10, near = 0, best = 0, sessionBest = 0, sessionTotal = 0,
   board = {}, sendAt = 0, stats = { maxMult = 1, top = 0 }, lastRun = nil, heat = 0, crashFlash = 0, bankFlash = 0, lastBank = 0, runTime = 0,
-  startSpeed = 70, endSpeed = 30, pulse = 0, seq = 0, anim = nil, crashes = 0,
+  startSpeed = 70, endSpeed = 30, pw = {}, bankTime = 3, pulse = 0, seq = 0, anim = nil, crashes = 0,
 }
 local HESI_EVENTS = {
   overtake  = { name = 'OVERTAKE',   pts = 120, mult = 0.10, color = rgbm(1, 1, 1, 1) },
@@ -1981,9 +2516,13 @@ local function addEvent(kind, extra)
   local before = tierFor(HESI.mult)
   local car = ac.getCar(0)
   local speedFactor = clamp(car.speedKmh / 120, 0.6, 3)
-  local pts = e.pts * HESI.mult * speedFactor * (extra or 1)
+  local fx = HESI.pw or {}
+  local pts = e.pts * HESI.mult * speedFactor * (extra or 1) * (fx.mult or 1)
+  if fx.magnet and (kind == 'near' or kind == 'close' or kind == 'oncoming' or kind == 'split') then pts = pts * 1.6 end
+  local jackpot = fx.lucky and math.random() < 0.125
+  if jackpot then pts = pts * 3 end
   HESI.run = HESI.run + pts
-  HESI.mult = math.min(MAX_MULT, HESI.mult + e.mult)
+  HESI.mult = math.min(MAX_MULT, HESI.mult + e.mult * (fx.drive and 2 or 1))
   HESI.combo = HESI.comboMax
   HESI.heat = math.min(1, HESI.heat + 0.25)
   HESI.pulse = 1
@@ -1991,7 +2530,7 @@ local function addEvent(kind, extra)
   local st = HESI.stats
   st[kind] = (st[kind] or 0) + 1
   if HESI.mult > st.maxMult then st.maxMult = HESI.mult end
-  pushFeed(e.name .. '  +' .. fmtPts(pts), e.color, kind == 'split' or kind == 'close' or kind == 'trap')
+  pushFeed((jackpot and 'JACKPOT  ' or '') .. e.name .. '  +' .. fmtPts(pts), jackpot and rgbm(1, 0.85, 0.2, 1) or e.color, jackpot or kind == 'split' or kind == 'close' or kind == 'trap')
   local after = tierFor(HESI.mult)
   if after.at > before.at and after.name ~= '' then pushFeed(after.name, rgbm(1, 0.8, 0.25, 1), true) end
 end
@@ -2000,8 +2539,14 @@ local function startRun()
   HESI.running, HESI.run, HESI.mult, HESI.combo, HESI.slowT, HESI.runTime = true, 0, 1, 0, 0, 0
   HESI.cars = {}
   HESI.trapDone = false
-  HESI.stats = { maxMult = 1, top = 0 }
+  HESI.stats = { maxMult = 1, top = 0, dist = 0 }
+  local fx = XM.armRun()
+  HESI.pw = fx
+  HESI.mult = fx.head and 3 or 1
+  HESI.comboMax = 7 + (fx.hyper and 4 or 0)
+  HESI.bankTime = fx.quick and 1.2 or 3
   pushFeed('RUN STARTED', rgbm(0.4, 1, 0.5, 1))
+  if #fx.names > 0 then pushFeed('ARMED  ' .. table.concat(fx.names, ' · '), rgbm(0.8, 0.5, 1, 1)) end
 end
 
 local hesiSend
@@ -2021,12 +2566,26 @@ end
 
 local function endRun(crashed)
   if not HESI.running then return end
+  local fx = HESI.pw or {}
+  local saved = false
+  if crashed and fx.shield then
+    fx.shield, crashed, saved = false, false, true
+    HESI.run = HESI.run * 0.6
+    pushFeed('GHOST SHIELD  saved 60%', rgbm(0.75, 0.5, 1, 1), true)
+  end
+  if (not crashed) and fx.hunter and HESI.run > S.hesiPB then
+    HESI.run = HESI.run * 1.25
+    pushFeed('PB HUNTER  +25%', rgbm(1, 0.8, 0.25, 1), true)
+  end
   HESI.running = false
   local score = math.floor(HESI.run)
   local st = HESI.stats or {}
   HESI.lastRun = { score = score, crashed = crashed, time = HESI.runTime, top = st.top or 0, maxMult = st.maxMult or 1,
     near = (st.near or 0), close = (st.close or 0), split = (st.split or 0), oncoming = (st.oncoming or 0),
-    overtake = (st.overtake or 0), pb = (not crashed) and score > S.hesiPB, at = os.date('%H:%M') }
+    overtake = (st.overtake or 0), pb = (not crashed) and score > S.hesiPB, at = os.date('%H:%M'),
+    avg = (HESI.runTime > 1) and ((st.dist or 0) / HESI.runTime * 3.6) or 0, saved = saved, boost = fx.mult or 1, fxNames = fx.names }
+  local payout = XM.onRunEnd(HESI.lastRun, crashed, fx)
+  pushFeed('CASH  +$' .. fmtPts(payout), rgbm(0.5, 1, 0.6, 1))
   S.hesiRuns = S.hesiRuns + 1
   S.hesiNear = S.hesiNear + HESI.near
   HESI.near = 0
@@ -2052,6 +2611,7 @@ local function endRun(crashed)
     end
   end
   HESI.run, HESI.mult, HESI.combo = 0, 1, 0
+  HESI.pw, HESI.bankTime, HESI.comboMax = {}, 3, 7
   HESI.lastEvt = { kind = crashed and 1 or 2, score = score, at = clock() }
   broadcast(crashed and 1 or 2, score)
 end
@@ -2110,10 +2670,11 @@ local function hesiUpdate(dt)
   HESI.runTime = HESI.runTime + dt
   if HESI.stats and speed > HESI.stats.top then HESI.stats.top = speed end
   -- speed points
-  HESI.run = HESI.run + dt * (speed / 12) * HESI.mult
+  HESI.run = HESI.run + dt * (speed / 12) * HESI.mult * (HESI.pw.mult or 1)
+  if HESI.stats then HESI.stats.dist = (HESI.stats.dist or 0) + speed / 3.6 * dt end
   -- combo timer / multiplier decay
   if HESI.combo > 0 then
-    HESI.combo = HESI.combo - dt
+    HESI.combo = HESI.combo - dt * (HESI.pw.warp and 0.4 or 1)
     if HESI.combo <= 0 then HESI.mult = math.max(1, HESI.mult * 0.7) if HESI.mult > 1.05 then HESI.combo = 2.5 end end
   end
   -- speed trap
@@ -2122,7 +2683,7 @@ local function hesiUpdate(dt)
   -- bank when slow for a few seconds
   if speed < HESI.endSpeed then
     HESI.slowT = HESI.slowT + dt
-    if HESI.slowT > 3 then endRun(false) return end
+    if HESI.slowT > HESI.bankTime then endRun(false) return end
   else
     HESI.slowT = 0
   end
@@ -2170,7 +2731,7 @@ local function hesiUpdate(dt)
   end
 
   -- share live state every couple of seconds
-  if clock() > HESI.sendAt then HESI.sendAt = clock() + 2 broadcast() end
+  if clock() > HESI.sendAt then HESI.sendAt = clock() + 1 broadcast() end
 end
 HESI.update = hesiUpdate
 
@@ -2179,6 +2740,205 @@ if ac.onCarCollision then
     if HESI.running and HESI.runTime > 1 then endRun(true) end
   end)
 end
+end
+-- ===========================================================================
+-- Vault: an in-game music player for your own tracks (unreleased music, downloads from
+-- Untitled, anything on your PC), with a library, search and a play queue.
+-- ===========================================================================
+
+XM.vault = { tracks = {}, queue = {}, history = {}, cur = nil, scanned = '', scanning = false, order = {} }
+
+do
+local VAULT = XM.vault
+local AUDIO = { mp3 = true, wav = true, flac = true, m4a = true, ogg = true, aac = true, wma = true, opus = true, mp4 = false }
+local player
+
+local function parseName(file)
+  local base = file:gsub('%.[%w]+$', '')
+  base = base:gsub('^%d+[%.%-_ ]+', '')                 -- leading track number
+  base = base:gsub('_', ' ')
+  local artist, title = base:match('^(.-)%s+%-%s+(.+)$')
+  if artist and title then return title, artist end
+  return base, ''
+end
+
+local function findCover(dir, base)
+  for _, ext in ipairs({ 'jpg', 'png', 'jpeg' }) do
+    for _, n in ipairs({ base, 'cover', 'folder', 'artwork', 'Cover', 'Folder' }) do
+      local p = dir .. '/' .. n .. '.' .. ext
+      if io.fileExists(p) then return p end
+    end
+  end
+end
+
+local function scanInto(dir, out, depth)
+  local ok, list = pcall(io.scanDir, dir, '*')
+  if not ok or type(list) ~= 'table' then return end
+  for _, f in ipairs(list) do
+    local ext = f:lower():match('%.(%w+)$')
+    if ext and AUDIO[ext] then
+      local title, artist = parseName(f)
+      local base = f:gsub('%.[%w]+$', '')
+      out[#out + 1] = { path = dir .. '/' .. f, file = f, title = title, artist = artist, ext = ext, cover = findCover(dir, base),
+        folder = dir:match('[^/\\]+$') or dir, search = (title .. ' ' .. artist .. ' ' .. f):lower() }
+    elseif not ext and depth < 2 then
+      scanInto(dir .. '/' .. f, out, depth + 1)
+    end
+  end
+end
+
+function VAULT.scan()
+  local folder = S.vaultFolder
+  if folder == '' or not io.dirExists(folder) then VAULT.tracks = {} VAULT.scanned = '' return end
+  local out = {}
+  scanInto(folder, out, 0)
+  table.sort(out, function(a, b) return a.search < b.search end)
+  VAULT.tracks, VAULT.scanned = out, folder
+  VAULT.order = {}
+  for i = 1, #out do VAULT.order[i] = i end
+end
+
+function VAULT.pickFolder()
+  if not os.openFileDialog then toast('Not available', 'Needs a newer CSP', '⚠️') return end
+  os.openFileDialog({ title = 'Choose your music folder', flags = os.DialogFlags.PickFolders + os.DialogFlags.PathMustExist }, function(err, path)
+    if err or not path or path == '' then return end
+    S.vaultFolder = path:gsub('[/\\]+$', '')
+    VAULT.scan()
+    toast('Vault ready', #VAULT.tracks .. ' tracks found', '♫')
+  end)
+end
+
+function VAULT.openUntitled()
+  if os.openURL then os.openURL(S.untitledUrl ~= '' and S.untitledUrl or 'https://untitled.stream', false) end
+end
+
+local function ensurePlayer()
+  if not player then
+    local ok, p = pcall(ui.MediaPlayer)
+    if not ok or not p then toast('Vault', 'Audio playback isn’t available on this PC', '⚠️') return nil end
+    player = p
+  end
+  return player
+end
+
+function VAULT.playing()
+  return player ~= nil and VAULT.cur ~= nil and player:playing()
+end
+function VAULT.position() return player and VAULT.cur and player:currentTime() or 0 end
+function VAULT.duration() return player and VAULT.cur and player:duration() or 0 end
+
+function VAULT.play(track, noHistory)
+  local p = ensurePlayer()
+  if not p or not track then return end
+  if VAULT.cur and not noHistory then
+    VAULT.history[#VAULT.history + 1] = VAULT.cur
+    while #VAULT.history > 40 do table.remove(VAULT.history, 1) end
+  end
+  VAULT.cur = track
+  p:setSource(track.path):setVolume(S.vaultVol):setAutoPlay(true)
+  pcall(p.play, p)
+  VAULT.startedAt = clock()
+  VAULT.paused = false
+end
+
+function VAULT.toggle()
+  if not VAULT.cur then
+    local t = VAULT.tracks[VAULT.order[1] or 1]
+    if t then VAULT.play(t) end
+    return
+  end
+  if not player then return end
+  if player:playing() then pcall(player.pause, player) VAULT.paused = true
+  else pcall(player.play, player) VAULT.paused = false end
+end
+
+local function indexOf(track)
+  for i, t in ipairs(VAULT.tracks) do if t == track then return i end end
+end
+
+function VAULT.next()
+  if #VAULT.queue > 0 then
+    local t = table.remove(VAULT.queue, 1)
+    VAULT.play(t)
+    return
+  end
+  if #VAULT.tracks == 0 then return end
+  if S.vaultShuffle then
+    VAULT.play(VAULT.tracks[math.random(#VAULT.tracks)])
+    return
+  end
+  local i = (indexOf(VAULT.cur) or 0) + 1
+  if i > #VAULT.tracks then
+    if S.vaultRepeat == 1 then VAULT.stop() return end   -- 1 = off, 2 = all, 3 = one
+    i = 1
+  end
+  VAULT.play(VAULT.tracks[i])
+end
+
+function VAULT.prev()
+  if VAULT.cur and VAULT.position() > 4 then player:setCurrentTime(0) return end
+  local t = table.remove(VAULT.history)
+  if t then VAULT.play(t, true) elseif VAULT.cur then player:setCurrentTime(0) end
+end
+
+function VAULT.stop()
+  if player then pcall(player.pause, player) end
+  VAULT.cur, VAULT.paused = nil, false
+end
+
+function VAULT.seek(frac)
+  local d = VAULT.duration()
+  if player and d > 0 then player:setCurrentTime(clamp(frac, 0, 1) * d) end
+end
+
+function VAULT.setVolume(v)
+  S.vaultVol = clamp(v, 0, 1)
+  if player then player:setVolume(S.vaultVol) end
+end
+
+function VAULT.enqueue(t) VAULT.queue[#VAULT.queue + 1] = t end
+function VAULT.playNext(t) table.insert(VAULT.queue, 1, t) end
+function VAULT.dequeue(i) table.remove(VAULT.queue, i) end
+function VAULT.moveUp(i)
+  if i > 1 then VAULT.queue[i], VAULT.queue[i - 1] = VAULT.queue[i - 1], VAULT.queue[i] end
+end
+function VAULT.clearQueue() VAULT.queue = {} end
+
+function VAULT.search(q)
+  q = (q or ''):lower():gsub('^%s+', ''):gsub('%s+$', '')
+  if q == '' then return VAULT.tracks end
+  local out = {}
+  for _, t in ipairs(VAULT.tracks) do
+    local all = true
+    for word in q:gmatch('%S+') do if not t.search:find(word, 1, true) then all = false break end end
+    if all then out[#out + 1] = t end
+  end
+  return out
+end
+
+-- looks like the system music data so the lock screen, island and Control Centre can show it
+function VAULT.media()
+  local t = VAULT.cur
+  if not t then return nil end
+  return { title = t.title, artist = t.artist, album = t.folder, hasCover = t.cover ~= nil, coverPath = t.cover,
+    trackPosition = VAULT.position(), trackDuration = VAULT.duration(), isPlaying = VAULT.playing(), vault = true }
+end
+
+function VAULT.update(dt)
+  if not VAULT.cur or not player then return end
+  if VAULT.scanned == '' and S.vaultFolder ~= '' then return end
+  -- finished? (give the file a moment to load before trusting ended())
+  if clock() - (VAULT.startedAt or 0) > 1.5 and not VAULT.paused and player:ended() then
+    if S.vaultRepeat == 3 then
+      player:setCurrentTime(0) pcall(player.play, player)
+    else
+      VAULT.next()
+    end
+  end
+end
+
+-- first scan happens lazily
+if S.vaultFolder ~= '' then setTimeout(function() pcall(VAULT.scan) end, 1) end
 end
 
 -- ===========================================================================
@@ -2189,6 +2949,7 @@ local MEDIA = { pendingPlay = nil, pendingAt = 0, lastSend = 0 }
 local WALL = {}
 
 do
+local VAULT = XM.vault
 -- fallback only: media keys through Windows Script Host (179 play/pause, 176 next, 177 previous, 175 vol up, 174 vol down)
 local function sendMediaKeyFallback(vk)
   if not os.runConsoleProcess then return false end
@@ -2225,19 +2986,21 @@ local function media(builtin, vk)
 end
 
 function MEDIA.playPause()
+  if VAULT.cur then VAULT.toggle() return end
   local m = LIVE.music
   MEDIA.pendingPlay = not (m and m.isPlaying)
   MEDIA.pendingAt = clock()
   media(ac.mediaPlayPause, 179)
   LIVE.musicCheck = 0
 end
-function MEDIA.next() media(ac.mediaNextTrack, 176) LIVE.musicCheck = clock() - 0.3 end
-function MEDIA.prev() media(ac.mediaPreviousTrack, 177) LIVE.musicCheck = clock() - 0.3 end
-function MEDIA.volUp() media(nil, 175) end
-function MEDIA.volDown() media(nil, 174) end
+function MEDIA.next() if VAULT.cur then VAULT.next() return end media(ac.mediaNextTrack, 176) LIVE.musicCheck = clock() - 0.3 end
+function MEDIA.prev() if VAULT.cur then VAULT.prev() return end media(ac.mediaPreviousTrack, 177) LIVE.musicCheck = clock() - 0.3 end
+function MEDIA.volUp() if VAULT.cur then VAULT.setVolume(S.vaultVol + 0.1) return end media(nil, 175) end
+function MEDIA.volDown() if VAULT.cur then VAULT.setVolume(S.vaultVol - 0.1) return end media(nil, 174) end
 
 -- current track, with an optimistic play state right after a tap
 function MEDIA.now()
+  if VAULT.cur then return VAULT.media(), VAULT.playing() end
   local m = LIVE.music
   if not m or not m.title or m.title == '' then return nil end
   local playing = m.isPlaying
@@ -2271,7 +3034,7 @@ function MEDIA.cover(m, x1, y1, x2, y2, r)
   rect(x1, y1, x2, y2, accent(), r)
   ui.drawRectFilledMultiColor(P(x1, y1 + r), P(x2, y2 - r), A(accent()), A(accent()), A(mix(accent(), rgbm(0, 0, 0, 1), 0.5)), A(mix(accent(), rgbm(0, 0, 0, 1), 0.5)))
   local drawn = false
-  if m and m.hasCover then drawn = pcall(ui.drawImageRounded, m, P(x1, y1), P(x2, y2), A(T.white), nil, nil, r) end
+  if m and m.hasCover then drawn = pcall(ui.drawImageRounded, m.coverPath or m, P(x1, y1), P(x2, y2), A(T.white), nil, nil, r) end
   if not drawn then
     local s = (x2 - x1) * 0.4
     glyph('MUSIC', (x1 + x2) / 2 - s / 2, (y1 + y2) / 2 - s / 2, s, rgbm(1, 1, 1, 0.85))
@@ -2304,6 +3067,7 @@ end
 
 -- draws an image filling the box (cropped, never stretched)
 function WALL.cover(path, x1, y1, x2, y2, rounding, tint)
+  if type(path) == 'table' and path.coverPath then path = path.coverPath end
   local okS, sz = pcall(ui.imageSize, path)
   if type(path) ~= 'string' and (not okS or not sz or sz.x <= 0) then sz = vec2(1, 1) end -- album art: assume square
   if not okS or not sz or sz.x <= 0 or sz.y <= 0 then return false end
@@ -2330,12 +3094,19 @@ function WALL.music(x1, y1, x2, y2, rounding)
   local oldA = D.a
   D.a = D.a * WALL.musicFade
   local ok
-  if S.musicBlur and ui.beginBlurring then
+  local mode = S.musicArtMode
+  if mode ~= 1 and ui.beginBlurring then
     ui.beginBlurring()
     ok = WALL.cover(m, x1 - 40, y1 - 40, x2 + 40, y2 + 40, 0)
-    ui.endBlurring(0.06)
+    ui.endBlurring(0.015 + 0.14 * S.musicBlurAmt)
   else
     ok = WALL.cover(m, x1, y1, x2, y2, rounding)
+  end
+  if mode == 3 and ok then
+    local side = (x2 - x1) * 0.74
+    local cx, top = (x1 + x2) / 2, y1 + (y2 - y1) * 0.17
+    rect(cx - side / 2 - 2, top - 2, cx + side / 2 + 2, top + side + 2, rgbm(0, 0, 0, 0.35), 20)
+    WALL.cover(m, cx - side / 2, top, cx + side / 2, top + side, 18)
   end
   D.a = oldA
   return ok
@@ -2374,7 +3145,7 @@ function WALL.import()
 end
 end
 
-local APPMOD = { Messages = {}, Friends = {}, Camera = {}, Walk = {}, Video = {}, Chase = {}, Plates = {}, Skins = {}, Weather = {}, Library = {}, Settings = {}, Maps = {}, Hud = {}, Livery = {}, Themes = {}, CutUp = {}, Music = {}, Leaders = {} }
+local APPMOD = { Messages = {}, Friends = {}, Camera = {}, Walk = {}, Video = {}, Chase = {}, Plates = {}, Skins = {}, Weather = {}, Library = {}, Settings = {}, Maps = {}, Hud = {}, Livery = {}, Themes = {}, CutUp = {}, Music = {}, Leaders = {}, Bank = {}, Market = {}, Power = {}, Runs = {}, Vault = {} }
 
 -- ===========================================================================
 -- Shared pieces for app screens
@@ -2841,6 +3612,13 @@ function APPMOD.Video.root()
       if fired then CAM.shot = shot.id CAM.flybyInit = nil if shot.id == 'free' then camStartFromCurrent() end end
     end
     y = y + 2 * 88 + 12
+    local curShot = VIDEO_SHOTS[1]
+    for _, sh in ipairs(VIDEO_SHOTS) do if sh.id == CAM.shot then curShot = sh end end
+    W.groupBg(y, 1)
+    if W.row('v.edit', 'Edit ' .. curShot.name .. ' angle', y, { chevron = true, first = true, last = true, icon = '🎛️', iconBg = rgbm(0.45, 0.4, 1, 1), sub = 'Distance, height, speed, lens, roll, shake' }) then
+      navPush(APPMOD.Video.editor(curShot.id))
+    end
+    y = y + 60
     y = W.sectionHeader('Film', y)
     local targets = { { 0, 'Me · ' .. (ac.getDriverName(0) or '') } }
     for _, p in ipairs(getPlayers()) do targets[#targets + 1] = { p.index, p.name } end
@@ -4516,6 +5294,11 @@ function APPMOD.Music.root()
     end
     MEDIA.controls('mu.', SW / 2, y + 10, 34, T.white)
     y = y + 70
+    if XM.vault.cur then
+      if W.button('mu.stopvault', 'Playing from Vault · stop', 36, y + 30, SW - 72, 34, 'tinted') then XM.vault.stop() end
+    else
+      if W.button('mu.vault', 'Open Vault: queue, search, your own tracks', 36, y + 30, SW - 72, 34, 'tinted') then APPMOD.openApp('vault') end
+    end
     if MEDIA.button('mu.vd', 'VOLUME_LOW', 60, y, 20, T.label2) then MEDIA.volDown() end
     rect(90, y - 2, SW - 90, y + 2, rgbm(1, 1, 1, 0.18), 2)
     if MEDIA.button('mu.vu', 'VOLUME_HIGH', SW - 60, y, 20, T.label2) then MEDIA.volUp() end
@@ -4637,9 +5420,17 @@ function APPMOD.Themes.root()
       y = y + (math.floor(n / 4) + 1) * (tw * 1.7 + 8) + 4
       y = W.sectionFooter('Pick any image on your PC, 4K works great. It’s copied into the phone so it stays.', y)
     elseif S.wallMode == 'music' then
-      W.groupBg(y, 1)
-      S.musicBlur = W.toggleRow('wp.blur', 'Blur album art', S.musicBlur, y, { first = true, last = true })
-      y = W.sectionFooter('Your wallpaper becomes the cover of the song that’s playing and changes with every track. With no song playing you get the theme wallpaper.', y + 46)
+      text('ALBUM ART STYLE', 12, LIST.x + 16, y, T.label2, F.r)
+      y = y + 22
+      S.musicArtMode = W.segmented('wp.artmode', { 'Actual art', 'Blurred', 'Art + blur' }, S.musicArtMode, 16, y, SW - 32)
+      y = y + 44
+      if S.musicArtMode ~= 1 then
+        rect(LIST.x, y, LIST.x + LIST.w, y + 74, T.cell, 14)
+        local v, chb = W.sliderRow('wp.blurAmt', 'Blur amount', S.musicBlurAmt * 100, 0, 100, '%d%%', y, { last = true })
+        if chb then S.musicBlurAmt = v / 100 end
+        y = y + 84
+      end
+      y = W.sectionFooter('Your wallpaper becomes the cover of the song that’s playing and changes with every track. Actual art shows the sharp cover, Blurred softens it, and Art + blur floats the sharp cover over a blurred backdrop. With no song playing you get the theme wallpaper.', y + 46)
     elseif S.wallMode ~= 'theme' and not WALL.path() then
       y = W.sectionFooter(S.wallMode == 'car' and 'This skin has no preview image yet. Content Manager can generate one.' or 'This track has no preview image.', y)
     end
@@ -4676,12 +5467,13 @@ function APPMOD.Themes.root()
     y = W.sectionHeader('App icons', y + 8)
     S.iconStyle = W.segmented('pf.icons', { 'Colour', 'Glass', 'Minimal' }, S.iconStyle or 1, 16, y, SW - 32)
     y = y + 52
-    W.groupBg(y, 3)
+    W.groupBg(y, 4)
     local v = W.toggleRow('th.thick', 'Bold text', S.thick, y, { first = true })
     if v ~= S.thick then S.thick = v buildFonts() end
     S.motifs = W.toggleRow('th.motif', 'Theme symbols', S.motifs, y + 46)
-    if W.row('th.home', 'Home Screen apps', y + 92, { chevron = true, last = true }) then navPush(personalizeHome()) end
-    y = y + 150
+    if W.row('th.home', 'Home Screen apps', y + 92, { chevron = true }) then navPush(personalizeHome()) end
+    if W.row('th.welcome', 'Welcome Screen', y + 138, { chevron = true, last = true }) then navPush(APPMOD.Themes.welcome()) end
+    y = y + 196
 
     y = W.sectionHeader('Accent colour', y)
     rect(LIST.x, y, LIST.x + LIST.w, y + 64, T.cell, 14)
@@ -5066,6 +5858,949 @@ end
 
 end
 -- ===========================================================================
+-- v1.0 apps: Bank, Market, Power-Ups, Runs, Vault, camera angle editor, welcome screen
+-- ===========================================================================
+
+do
+local VAULT = XM.vault
+local GOLD = rgbm(1, 0.8, 0.25, 1)
+local MONEY_GREEN = rgbm(0.35, 0.95, 0.55, 1)
+local money = XM.money
+
+local function ago(t)
+  local d = os.time() - t
+  if d < 60 then return 'just now' end
+  if d < 3600 then return math.floor(d / 60) .. ' min ago' end
+  if d < 86400 then return math.floor(d / 3600) .. ' h ago' end
+  return math.floor(d / 86400) .. ' d ago'
+end
+
+local function visible(s, yy, h) return yy + h > s.y - 20 and yy < s.y + SH + 20 end
+
+local function tile(x, y, w, h, label, value, color)
+  rect(x, y, x + w, y + h, T.cell, 14)
+  if S.thick and T.border then rectLine(x, y, x + w, y + h, T.border, 14, 1.5) end
+  text(label, 9, x + 10, y + 10, T.label2, F.b)
+  textFit(value, 18, x + 10, y + 28, w - 20, color or T.white, F.numb)
+end
+
+local function tileRow(y, items)
+  local n = #items
+  local gap = 10
+  local w = (SW - 32 - gap * (n - 1)) / n
+  for i, it in ipairs(items) do tile(16 + (i - 1) * (w + gap), y, w, 62, it[1], it[2], it[3]) end
+  return y + 74
+end
+
+local function sparkline(x1, y1, x2, y2, vals, color)
+  local lo, hi = math.huge, -math.huge
+  for _, v in ipairs(vals) do lo = math.min(lo, v) hi = math.max(hi, v) end
+  if hi - lo < 1e-6 then hi = lo + 1 end
+  local n = #vals
+  local px, py
+  for i, v in ipairs(vals) do
+    local x = x1 + (x2 - x1) * (i - 1) / (n - 1)
+    local y = y2 - (y2 - y1) * (v - lo) / (hi - lo)
+    if px then line(px, py, x, y, color, 2) end
+    px, py = x, y
+  end
+  circle(px, py, 3.5, color)
+end
+
+local function smallButton(id, label, x, y, w, h, style, color)
+  return W.button(id, label, x, y, w, h or 30, style or 'tinted', color)
+end
+
+local function cardNumber(name)
+  local h = 7919
+  for i = 1, #name do h = (h * 31 + name:byte(i)) % 100000 end
+  return string.format('•••• %04d', h % 10000)
+end
+
+-- ===========================================================================
+-- CAMERA ANGLE EDITOR
+-- ===========================================================================
+function APPMOD.Video.editor(shotId)
+  local shot
+  for _, sh in ipairs(VIDEO_SHOTS) do if sh.id == shotId then shot = sh end end
+  local scr = { title = shot.name .. ' angle' }
+  local nameField = ''
+  function scr.draw()
+    bgFill()
+    local s = scrollBegin('shotedit' .. shotId, 94, BOTTOM)
+    local y = 104
+    -- live preview switch: the camera follows your edits as you drag
+    local live = CAM.mode == 'video' and CAM.shot == shotId
+    W.groupBg(y, 1)
+    local want = W.toggleRow('se.live', 'Live preview', live, y, { first = true, last = true, icon = '🎥', iconBg = rgbm(1, 0.35, 0.3, 1) })
+    if want ~= live then
+      if want then CAM.shot = shotId CAM.flybyInit = nil if CAM.mode then camRelease() end videoStart() else camRelease() end
+    end
+    y = W.sectionFooter('Turn this on and drag the sliders to see the angle change on your car straight away.', y + 46)
+    local cfgAll = XM.jget('shotCfg', {})
+    local cfg = cfgAll[shotId] or {}
+    y = W.sectionHeader('Adjust', y)
+    local n = #shot.params
+    rect(LIST.x, y, LIST.x + LIST.w, y + n * 74, T.cell, 14)
+    if S.thick and T.border then rectLine(LIST.x, y, LIST.x + LIST.w, y + n * 74, T.border, 14, 1.5) end
+    for i, p in ipairs(shot.params) do
+      local cur = cfg[p.key]
+      if cur == nil then cur = p.def end
+      local v, ch = W.sliderRow('se.' .. shotId .. p.key, p.label, cur, p.min, p.max, p.fmt, y, { last = i == n })
+      if ch then
+        cfg[p.key] = v
+        cfgAll[shotId] = cfg
+        XM.jset('shotCfg', cfgAll)
+      end
+      y = y + 74
+    end
+    y = y + 12
+    if W.button('se.reset', 'Reset to default', 16, y, SW - 32, 40, 'gray') then
+      cfgAll[shotId] = nil XM.jset('shotCfg', cfgAll)
+    end
+    y = y + 54
+    -- saved angles
+    y = W.sectionHeader('My ' .. shot.name .. ' angles', y)
+    local presets = XM.jget('shotPresets', {})
+    local list = presets[shotId] or {}
+    rect(LIST.x, y, LIST.x + LIST.w, y + 56, T.cell, 14)
+    nameField = W.field('se.name', nameField, 'Name this angle', LIST.x + 10, y + 10, LIST.w - 110, 36)
+    if W.button('se.save', 'Save', LIST.x + LIST.w - 90, y + 10, 80, 36, 'filled') then
+      local vals = {}
+      for _, p in ipairs(shot.params) do vals[p.key] = cfg[p.key] ~= nil and cfg[p.key] or p.def end
+      list[#list + 1] = { name = nameField ~= '' and nameField or ('Angle ' .. (#list + 1)), vals = vals }
+      presets[shotId] = list XM.jset('shotPresets', presets)
+      nameField = ''
+    end
+    y = y + 68
+    if #list > 0 then
+      W.groupBg(y, #list)
+      for i, pr in ipairs(list) do
+        local fired = W.row('se.pr' .. i, pr.name, y, { tap = true, first = i == 1, last = i == #list })
+        if smallButton('se.del' .. i, 'Delete', LIST.x + LIST.w - 76, y + 8, 64, 30, 'danger') then
+          table.remove(list, i) presets[shotId] = list XM.jset('shotPresets', presets)
+        elseif fired then
+          local copy = {}
+          for k, v in pairs(pr.vals) do copy[k] = v end
+          cfgAll[shotId] = copy XM.jset('shotCfg', cfgAll)
+          toast('Angle loaded', pr.name, '🎥')
+        end
+        y = y + 46
+      end
+      y = W.sectionFooter('Tap a saved angle to load it.', y)
+    end
+    scrollEnd(s, y + 24)
+    navBar(shot.name, { back = 'Video' })
+  end
+  return scr
+end
+
+-- ===========================================================================
+-- BANK
+-- ===========================================================================
+local function sendScreen()
+  local scr = { title = 'Send money' }
+  local sel, amount = nil, 500
+  function scr.draw()
+    bgFill()
+    local s = scrollBegin('bank.send', 94, BOTTOM)
+    local y = 104
+    local players = {}
+    for _, p in ipairs(getPlayers()) do if p.hasApp then players[#players + 1] = p end end
+    y = W.sectionHeader('To', y)
+    if #players == 0 then
+      text('Nobody with AC Phone is on the server yet', 14, SW / 2, y + 16, T.label2, F.r, 0.5)
+      y = y + 56
+    else
+      W.groupBg(y, #players)
+      for i, p in ipairs(players) do
+        local fired = W.row('bs.p' .. p.sid, p.name, y, { tap = true, first = i == 1, last = i == #players, sub = p.car })
+        if sel == p.sid then text('✓', 17, SW - 36, y + 11, accent(), F.sb, 0) end
+        if fired then sel = p.sid end
+        y = y + 46
+      end
+    end
+    y = y + 12
+    y = W.sectionHeader('Amount', y)
+    rect(LIST.x, y, LIST.x + LIST.w, y + 110, T.cell, 14)
+    text(money(amount), 30, SW / 2, y + 12, T.white, F.numb, 0.5)
+    local maxA = math.max(10, XM.cash())
+    local v, ch = W.slider('bs.amt', math.sqrt(amount / maxA), 0, 1, LIST.x + 20, y + 60, LIST.w - 40)
+    if ch then amount = math.max(10, math.floor(v * v * maxA / 10) * 10) end
+    y = y + 124
+    local chosen
+    for _, p in ipairs(players) do if p.sid == sel then chosen = p end end
+    local can = chosen and amount <= XM.cash() and amount > 0
+    if W.button('bs.go', chosen and ('Send ' .. money(amount) .. ' to ' .. chosen.name) or 'Choose who to pay', 16, y, SW - 32, 48, can and 'filled' or 'gray') and can then
+      if XM.sendMoney(chosen.sid, chosen.name, amount) then
+        toast('Sent', money(amount) .. ' to ' .. chosen.name, '💾')
+        navPop()
+      end
+    end
+    y = W.sectionFooter('Money arrives straight away. You can only send to friends who have AC Phone.', y + 60)
+    scrollEnd(s, y + 24)
+    navBar('Send money', { back = 'Bank' })
+  end
+  return scr
+end
+
+local function txScreen()
+  local scr = { title = 'Activity' }
+  function scr.draw()
+    bgFill()
+    local s = scrollBegin('bank.tx', 94, BOTTOM)
+    local y = 104
+    local log = XM.jget('txLog', {})
+    if #log == 0 then text('No activity yet. Finish a run to get paid.', 14, SW / 2, y + 20, T.label2, F.r, 0.5) y = y + 60 end
+    W.groupBg(y, #log)
+    for i, t in ipairs(log) do
+      W.row('tx' .. i, t.why or '', y, { first = i == 1, last = i == #log, sub = ago(t.t) })
+      if t.a ~= 0 then text((t.a > 0 and '+' or '') .. money(t.a), 16, SW - 32, y + 13, t.a > 0 and MONEY_GREEN or T.red, F.numb, 1) end
+      y = y + 46
+    end
+    scrollEnd(s, y + 24)
+    navBar('Activity', { back = 'Bank' })
+  end
+  return scr
+end
+
+function APPMOD.Bank.root()
+  local scr = { title = 'Bank' }
+  function scr.draw()
+    bgFill()
+    local s = scrollBegin('bank', 50, BOTTOM)
+    local y = largeTitle('Bank', 96, s.y)
+    local ac1 = accent()
+    -- card
+    local bal = HESI.anim('bank.cash', XM.cash(), 8)
+    local ch = 176
+    rect(16, y, SW - 16, y + ch, mix(rgbm(0.05, 0.05, 0.07, 1), ac1, 0.35), 22)
+    ui.drawRectFilledMultiColor(P(16, y + 22), P(SW - 16, y + ch - 22), A(ac1, 0.55), A(GOLD, 0.35), A(ac1, 0.1), A(rgbm(0, 0, 0, 1), 0.3))
+    rectLine(16, y, SW - 16, y + ch, A(T.white, 0.25), 22, 1.5)
+    text('HACKA BANK', 11, 36, y + 18, A(T.white, 0.85), F.b)
+    text(XM.titleName():upper(), 10, SW - 36, y + 19, GOLD, F.b, 1)
+    text(money(bal), 40, 36, y + 44, T.white, F.numb)
+    text('AVAILABLE', 9, 36, y + 92, A(T.white, 0.6), F.b)
+    local me = ac.getDriverName(0) or 'Driver'
+    text(cardNumber(me), 14, 36, y + ch - 52, A(T.white, 0.9), F.num)
+    text(me:upper(), 12, 36, y + ch - 30, A(T.white, 0.9), F.b)
+    text('NET WORTH', 9, SW - 36, y + ch - 56, A(T.white, 0.6), F.b, 1)
+    text(money(XM.netWorth()), 16, SW - 36, y + ch - 42, T.white, F.numb, 1)
+    y = y + ch + 14
+    -- actions
+    local bw = (SW - 32 - 16) / 3
+    if W.button('bk.send', 'Send', 16, y, bw, 44, 'filled') then navPush(sendScreen()) end
+    if W.button('bk.act', 'Activity', 16 + bw + 8, y, bw, 44, 'gray') then navPush(txScreen()) end
+    if W.button('bk.mkt', 'Market', 16 + (bw + 8) * 2, y, bw, 44, 'gray') then APPMOD.openApp('market') end
+    y = y + 60
+    -- run income
+    local runs = XM.jget('runLog', {})
+    local earned = 0
+    for _, r in ipairs(runs) do earned = earned + (r.pay or 0) end
+    y = tileRow(y, { { 'FROM RUNS', money(earned), MONEY_GREEN }, { 'SAVINGS', money(XM.saved()) }, { 'TOKENS', money(XM.holdValue()) } })
+    -- savings
+    y = W.sectionHeader('Savings account', y)
+    rect(LIST.x, y, LIST.x + LIST.w, y + 130, T.cell, 14)
+    if S.thick and T.border then rectLine(LIST.x, y, LIST.x + LIST.w, y + 130, T.border, 14, 1.5) end
+    text(money(HESI.anim('bank.saved', XM.saved(), 8)), 26, LIST.x + 16, y + 12, T.white, F.numb)
+    text(string.format('%.1f%% every minute · works while you’re offline', XM.rate() * 100), 12, LIST.x + 16, y + 48, MONEY_GREEN, F.m)
+    local bw2 = (LIST.w - 32 - 16) / 3
+    local by = y + 78
+    if smallButton('bk.d25', 'Save 25%', LIST.x + 16, by, bw2, 36) then XM.deposit(XM.cash() * 0.25) end
+    if smallButton('bk.d100', 'Save all', LIST.x + 16 + bw2 + 8, by, bw2, 36) then XM.deposit(XM.cash()) end
+    if smallButton('bk.w', 'Withdraw', LIST.x + 16 + (bw2 + 8) * 2, by, bw2, 36, 'gray') then XM.withdraw(XM.saved()) end
+    y = W.sectionFooter('Every run pays you: banked runs pay more, crashes still pay a little. Keep spare cash in savings and it grows.', y + 130)
+    -- rich list
+    y = W.sectionHeader('Richest drivers', y)
+    local rich = XM.richList()
+    W.groupBg(y, math.min(#rich, 8))
+    for i = 1, math.min(#rich, 8) do
+      local r = rich[i]
+      W.row('rich' .. i, (i .. '.  ') .. r.name .. (r.me and '  (you)' or ''), y, { first = i == 1, last = i == math.min(#rich, 8) })
+      text(money(r.wealth), 15, SW - 32, y + 12, i == 1 and GOLD or T.label2, F.numb, 1)
+      y = y + 46
+    end
+    y = W.sectionFooter('Net worth counts cash, savings and tokens. Everyone with AC Phone shows up here.', y)
+    scrollEnd(s, y + 24)
+    navBar('Bank', { large = true }, s.y)
+  end
+  return scr
+end
+
+-- ===========================================================================
+-- MARKET
+-- ===========================================================================
+function APPMOD.Market.root()
+  local scr = { title = 'Market' }
+  local tab, qtyIdx = 1, 2
+  local QTY = { 1, 5, 25, 100 }
+  local sellSel, sellQty, sellPrice = nil, 1, 500
+  function scr.draw()
+    if scr.setTab then tab = scr.setTab scr.setTab = nil end
+    bgFill()
+    local s = scrollBegin('market', 50, BOTTOM)
+    local y = largeTitle('Market', 96, s.y)
+    text(money(XM.cash()), 13, SW - 16, y - 14, MONEY_GREEN, F.numb, 1)
+    tab = W.segmented('mk.tab', { 'Exchange', 'Players', 'Sell', 'Shop' }, tab, 16, y, SW - 32)
+    y = y + 46
+    local now = os.time()
+    if tab == 1 then
+      qtyIdx = W.segmented('mk.qty', { 'x1', 'x5', 'x25', 'x100' }, qtyIdx, 16, y, SW - 32)
+      y = y + 46
+      local qty = QTY[qtyIdx]
+      for _, t in ipairs(XM.TOKENS) do
+        local h = 164
+        local px = XM.price(t.id)
+        local old = XM.priceAt(t, now - 300)
+        local chg = (px - old) / old * 100
+        local up = chg >= 0
+        local col = up and MONEY_GREEN or T.red
+        rect(16, y, SW - 16, y + h, T.cell, 18)
+        if S.thick and T.border then rectLine(16, y, SW - 16, y + h, T.border, 18, 1.5) end
+        glyph(t.icon:sub(2), 30, y + 14, 26, accent())
+        text(t.name, 16, 64, y + 12, T.white, F.sb)
+        text(t.id, 11, 64, y + 34, T.label2, F.num)
+        text(string.format('$%.2f', HESI.anim('px' .. t.id, px * 100, 6) / 100), 22, SW - 30, y + 12, T.white, F.numb, 1)
+        text(string.format('%s%.1f%%  5 min', up and '+' or '', chg), 12, SW - 30, y + 40, col, F.num, 1)
+        local vals = {}
+        for i = 0, 40 do vals[#vals + 1] = XM.priceAt(t, now - (40 - i) * 15) end
+        sparkline(32, y + 66, SW - 32, y + 100, vals, col)
+        local hold = XM.holdings()[t.id]
+        local hn = hold and hold.n or 0
+        local pl = hold and (px * hold.n - hold.cost) or 0
+        text(hn > 0 and string.format('You hold %d · %s%s', hn, pl >= 0 and '+' or '', money(pl)) or 'You hold none', 12, 32, y + 108, hn > 0 and (pl >= 0 and MONEY_GREEN or T.red) or T.label2, F.m)
+        local bw = (SW - 32 - 32 - 8) / 2
+        local cost = math.ceil(px * qty * 1.01)
+        if W.button('mk.b' .. t.id, 'Buy ' .. qty .. ' · ' .. money(cost), 32, y + 120, bw, 34, cost <= XM.cash() and 'filled' or 'gray') and cost <= XM.cash() then
+          XM.buyToken(t.id, qty)
+        end
+        if W.button('mk.s' .. t.id, 'Sell ' .. qty, 32 + bw + 8, y + 120, bw, 34, hn >= qty and 'tinted' or 'gray', col) and hn >= qty then
+          XM.sellToken(t.id, qty)
+        end
+        y = y + h + 12
+      end
+      y = W.sectionFooter('Prices move every few seconds and are the same for everybody on the server. Trades cost a 1% fee.', y)
+    elseif tab == 2 then
+      local rows = XM.marketRows()
+      if #rows == 0 then
+        glyph('GROUP', SW / 2 - 20, y + 20, 40, T.label3)
+        text('No player listings right now', 15, SW / 2, y + 72, T.label2, F.sb, 0.5)
+        text('Friends with AC Phone can list power-ups and tokens here.', 12, SW / 2, y + 96, T.label3, F.r, 0.5)
+        y = y + 130
+      else
+        rect(LIST.x, y, LIST.x + LIST.w, y + #rows * 64, T.cell, 14)
+        for i, l in ipairs(rows) do
+          local yy = y + (i - 1) * 64
+          avatar(l.seller, LIST.x + 12, yy + 14, 36)
+          textFit(l.qty .. 'x ' .. XM.itemName(l.item), 15, LIST.x + 58, yy + 10, 140, T.label, F.sb)
+          textFit(l.seller .. string.format(' · %s each', money(l.price / math.max(1, l.qty))), 12, LIST.x + 58, yy + 34, 150, T.label2)
+          local pend = XM.isPending(l)
+          local can = XM.cash() >= l.price and not pend
+          if W.button('mk.buy' .. l.sid .. l.id, pend and '…' or money(l.price), LIST.x + LIST.w - 104, yy + 14, 92, 36, can and 'filled' or 'gray') and can then
+            XM.buyListing(l)
+          end
+          if i < #rows then line(LIST.x + 58, yy + 64, LIST.x + LIST.w, yy + 64, T.sep, 1) end
+        end
+        y = y + #rows * 64
+      end
+      y = W.sectionFooter('You pay now and get the item the moment the seller’s phone confirms. If they leave, you’re refunded.', y + 8)
+    elseif tab == 3 then
+      -- items you can sell
+      local items = {}
+      for _, p in ipairs(XM.PW) do local n = XM.have(p.id) if n > 0 then items[#items + 1] = { n = p.n, name = p.name, have = n, color = XM.rarityColor[p.rarity] } end end
+      for _, t in ipairs(XM.TOKENS) do local h = XM.holdings()[t.id] if h and h.n > 0 then items[#items + 1] = { n = t.n, name = t.name, have = h.n, color = accent() } end end
+      y = W.sectionHeader('Pick something to sell', y)
+      if #items == 0 then
+        text('You don’t own anything sellable yet', 14, SW / 2, y + 16, T.label2, F.r, 0.5)
+        y = y + 56
+      else
+        W.groupBg(y, #items)
+        for i, it in ipairs(items) do
+          local fired = W.row('ms.i' .. it.n, it.name, y, { tap = true, first = i == 1, last = i == #items, value = 'x' .. it.have })
+          if sellSel == it.n then rectLine(LIST.x + 2, y + 2, LIST.x + LIST.w - 2, y + 44, accent(), 10, 2) end
+          if fired then sellSel = it.n sellQty = 1 sellPrice = 500 end
+          y = y + 46
+        end
+        local cur
+        for _, it in ipairs(items) do if it.n == sellSel then cur = it end end
+        if cur then
+          y = y + 12
+          rect(LIST.x, y, LIST.x + LIST.w, y + 160, T.cell, 14)
+          local v1, c1 = W.sliderRow('ms.qty', 'Quantity', sellQty, 1, math.max(1, cur.have), '%d', y, {})
+          if c1 then sellQty = math.max(1, math.floor(v1 + 0.5)) end
+          local v2, c2 = W.slider('ms.price', math.sqrt(sellPrice / 200000), 0, 1, LIST.x + 18, y + 90, LIST.w - 36)
+          if c2 then sellPrice = math.max(10, math.floor(v2 * v2 * 200000 / 10) * 10) end
+          text('Asking price', 14, LIST.x + 16, y + 84 - 24, T.label, F.r)
+          text(money(sellPrice), 15, LIST.x + LIST.w - 16, y + 60, MONEY_GREEN, F.numb, 1)
+          if W.button('ms.go', 'List ' .. sellQty .. 'x ' .. cur.name .. ' for ' .. money(sellPrice), LIST.x + 16, y + 118, LIST.w - 32, 34, 'filled') then
+            if XM.listItem(cur.n, sellQty, sellPrice) then
+              toast('Listed', sellQty .. 'x ' .. cur.name .. ' · ' .. money(sellPrice), '💾')
+              sellSel = nil
+            end
+          end
+          y = y + 172
+        end
+      end
+      local mine = XM.jget('myList', {})
+      if #mine > 0 then
+        y = W.sectionHeader('Your listings', y + 6)
+        W.groupBg(y, #mine)
+        for i, l in ipairs(mine) do
+          W.row('ml' .. l.id, l.qty .. 'x ' .. XM.itemName(l.item), y, { first = i == 1, last = i == #mine, sub = money(l.price) })
+          if smallButton('mlc' .. l.id, 'Cancel', LIST.x + LIST.w - 78, y + 8, 66, 30, 'danger') then XM.unlist(l.id) end
+          y = y + 46
+        end
+      end
+      y = W.sectionFooter('Listed items are held for you until they sell or you cancel.', y + 4)
+    else
+      y = W.sectionHeader('Titles', y)
+      local owned = XM.jget('titles', {})
+      W.groupBg(y, #XM.TITLES)
+      for i, tt in ipairs(XM.TITLES) do
+        local isOwned = owned[tt.id] or tt.price == 0
+        local sel = S.title == tt.id
+        W.row('tt' .. tt.id, tt.name, y, { first = i == 1, last = i == #XM.TITLES, sub = isOwned and (sel and 'Equipped' or 'Owned') or money(tt.price) })
+        local label = sel and 'Equipped' or (isOwned and 'Equip' or 'Buy')
+        local can = sel or isOwned or XM.cash() >= tt.price
+        if smallButton('ttb' .. tt.id, label, LIST.x + LIST.w - 90, y + 8, 78, 30, (not sel and can) and 'filled' or 'gray') and not sel and can then
+          XM.buyTitle(tt)
+        end
+        y = y + 46
+      end
+      y = W.sectionFooter('Your title shows on your bank card.', y)
+      y = W.sectionHeader('Permanent upgrades', y + 4)
+      W.groupBg(y, #XM.PERKS, 58)
+      for i, p in ipairs(XM.PERKS) do
+        local lv = XM.perkLevel(p.id)
+        local maxed = lv >= p.max
+        local price = XM.perkPrice(p)
+        local yy = y + (i - 1) * 58
+        textFit(p.name .. '  ·  Lv ' .. lv .. '/' .. p.max, 15, LIST.x + 16, yy + 8, LIST.w - 130, T.label, F.sb)
+        textFit(p.desc, 12, LIST.x + 16, yy + 32, LIST.w - 130, T.label2)
+        local can = (not maxed) and XM.cash() >= price
+        if smallButton('pk' .. p.id, maxed and 'MAX' or money(price), LIST.x + LIST.w - 102, yy + 12, 90, 34, can and 'filled' or 'gray') and can then XM.buyPerk(p) end
+        if i < #XM.PERKS then line(LIST.x + 16, yy + 58, LIST.x + LIST.w, yy + 58, T.sep, 1) end
+      end
+      y = y + #XM.PERKS * 58
+    end
+    scrollEnd(s, y + 24)
+    navBar('Market', { large = true }, s.y)
+  end
+  return scr
+end
+
+-- ===========================================================================
+-- POWER-UPS
+-- ===========================================================================
+function APPMOD.Power.root()
+  local scr = { title = 'Power-Ups' }
+  local tab = 1
+  local crate = nil   -- { t, result }
+  function scr.draw()
+    if scr.setTab then tab = scr.setTab scr.setTab = nil end
+    bgFill()
+    local s = scrollBegin('power', 50, BOTTOM)
+    local y = largeTitle('Power-Ups', 96, s.y)
+    text(money(XM.cash()), 13, SW - 16, y - 14, MONEY_GREEN, F.numb, 1)
+    -- loadout
+    local list = XM.equippedList()
+    local slots = { { 'MULTIPLIER' }, { 'BOOST 1' }, { 'BOOST 2' } }
+    local mult, fx = nil, {}
+    for _, id in ipairs(list) do
+      if XM.PW_BY[id].kind == 'mult' then mult = id else fx[#fx + 1] = id end
+    end
+    local fill = { mult, fx[1], fx[2] }
+    local sw = (SW - 32 - 16) / 3
+    for i = 1, 3 do
+      local x = 16 + (i - 1) * (sw + 8)
+      local id = fill[i]
+      local p = id and XM.PW_BY[id]
+      local col = p and XM.rarityColor[p.rarity] or T.label3
+      rect(x, y, x + sw, y + 92, p and mix(T.cell, col, 0.18) or T.cell, 16)
+      rectLine(x, y, x + sw, y + 92, p and A(col, 0.9) or T.sep, 16, p and 2 or 1)
+      text(slots[i][1], 9, x + sw / 2, y + 8, T.label2, F.b, 0.5)
+      if p then
+        text(p.tag, p.kind == 'mult' and 28 or 18, x + sw / 2, y + 26, col, F.numb, 0.5)
+        textFit(p.name, 12, x + sw / 2, y + 66, sw - 8, T.label, F.sb, 0.5)
+      else
+        glyph('PLUS', x + sw / 2 - 12, y + 34, 24, T.label3)
+      end
+    end
+    y = y + 104
+    if HESI.running and (#(HESI.pw.names or {}) > 0) then
+      text('ACTIVE THIS RUN: ' .. table.concat(HESI.pw.names, ' · '), 11, SW / 2, y, rgbm(0.8, 0.5, 1, 1), F.b, 0.5)
+      y = y + 22
+    end
+    tab = W.segmented('pw.tab', { 'Shop', 'My power-ups' }, tab, 16, y, SW - 32)
+    y = y + 46
+    if tab == 1 then
+      local cw = (SW - 32 - 10) / 2
+      for i, p in ipairs(XM.PW) do
+        local c, r = (i - 1) % 2, math.floor((i - 1) / 2)
+        local x, yy = 16 + c * (cw + 10), y + r * 186
+        local col = XM.rarityColor[p.rarity]
+        local owned = XM.have(p.id)
+        rect(x, yy, x + cw, yy + 176, mix(T.cell, col, 0.10), 18)
+        rectLine(x, yy, x + cw, yy + 176, A(col, 0.7), 18, 1.5)
+        text(XM.rarityName[p.rarity], 9, x + 12, yy + 10, col, F.b)
+        if owned > 0 then text('x' .. owned, 11, x + cw - 12, yy + 9, T.white, F.numb, 1) end
+        text(p.tag, p.kind == 'mult' and 34 or 22, x + 12, yy + 26, col, F.numb)
+        textFit(p.name, 14, x + 12, yy + 70, cw - 20, T.white, F.sb)
+        textBox(p.desc, 11, x + 12, yy + 92, x + cw - 10, yy + 140, T.label2)
+        local can = XM.cash() >= p.price
+        if W.button('pw.buy' .. p.id, money(p.price), x + 10, yy + 138, cw - 20, 30, can and 'filled' or 'gray', col) and can then
+          XM.buyPW(p)
+          toast('Bought ' .. p.name, 'Find it in My power-ups', '🔥')
+        end
+      end
+      y = y + math.ceil(#XM.PW / 2) * 186
+      y = W.sectionFooter('Equip power-ups, then drive. They’re used up when your next run starts: multipliers boost every point, boosts bend the rules.', y)
+    else
+      local owned = {}
+      for _, p in ipairs(XM.PW) do if XM.have(p.id) > 0 then owned[#owned + 1] = p end end
+      if #owned == 0 then
+        text('Nothing here yet', 15, SW / 2, y + 20, T.label, F.sb, 0.5)
+        text('Buy power-ups in the Shop tab.', 13, SW / 2, y + 44, T.label2, F.r, 0.5)
+        y = y + 90
+      else
+        W.groupBg(y, #owned, 56)
+        for i, p in ipairs(owned) do
+          local yy = y + (i - 1) * 56
+          local col = XM.rarityColor[p.rarity]
+          text(p.tag, p.kind == 'mult' and 20 or 13, LIST.x + 44, yy + (p.kind == 'mult' and 16 or 20), col, F.numb, 0.5)
+          textFit(p.name .. '  x' .. XM.have(p.id), 15, LIST.x + 84, yy + 9, LIST.w - 190, T.label, F.sb)
+          textFit(p.desc, 11, LIST.x + 84, yy + 31, LIST.w - 190, T.label2)
+          if p.kind == 'crate' then
+            if smallButton('pw.open', 'Open', LIST.x + LIST.w - 96, yy + 11, 84, 34, 'filled', col) and not crate then
+              crate = { t = 0, result = XM.openCrate() }
+            end
+          else
+            local eq = XM.isEquipped(p.id)
+            if smallButton('pw.eq' .. p.id, eq and 'Equipped' or 'Equip', LIST.x + LIST.w - 96, yy + 11, 84, 34, eq and 'gray' or 'tinted', col) then XM.toggleEquip(p.id) end
+          end
+          if i < #owned then line(LIST.x + 16, yy + 56, LIST.x + LIST.w, yy + 56, T.sep, 1) end
+        end
+        y = y + #owned * 56
+      end
+      y = W.sectionFooter('You get 1 multiplier slot and 2 boost slots. Equipped items auto-reload from your stash until it runs out.', y + 6)
+    end
+    scrollEnd(s, y + 24)
+    navBar('Power-Ups', { large = true }, s.y)
+    -- crate opening: spin, flash, reveal
+    if crate then
+      crate.t = crate.t + IN.dt
+      rect(0, 0, SW, SH, rgbm(0, 0, 0, 0.82), SCREEN.r)
+      local cx, cy = SW / 2, 320
+      if crate.t < 1.6 then
+        local k = crate.t / 1.6
+        local shake = math.sin(crate.t * 40) * 6 * k
+        glyph('APPS', cx - 40 + shake, cy - 40, 80, GOLD)
+        text('Opening…', 18, cx, cy + 70, T.white, F.sb, 0.5)
+      else
+        local p = crate.result
+        local k = clamp((crate.t - 1.6) * 3, 0, 1)
+        local col = p and XM.rarityColor[p.rarity] or T.white
+        for g = 4, 1, -1 do rect(cx - 110 - g * 6, cy - 120 - g * 6, cx + 110 + g * 6, cy + 120 + g * 6, A(col, 0.06 * k), 30 + g * 6) end
+        rect(cx - 110, cy - 120, cx + 110, cy + 120, mix(T.cell, col, 0.25), 30)
+        rectLine(cx - 110, cy - 120, cx + 110, cy + 120, A(col, k), 30, 2.5)
+        if p then
+          D.a = D.a * k
+          text(XM.rarityName[p.rarity], 12, cx, cy - 98, col, F.b, 0.5)
+          text(p.tag, p.kind == 'mult' and 56 or 34, cx, cy - 66, col, F.numb, 0.5)
+          text(p.name, 22, cx, cy + 16, T.white, F.sb, 0.5)
+          textBox(p.desc, 13, cx - 90, cy + 52, cx + 90, cy + 110, T.label2)
+          D.a = D.a / math.max(k, 0.001)
+        end
+        if W.button('pw.crateok', 'Nice', cx - 70, cy + 140, 140, 44, 'filled') then crate = nil end
+      end
+    end
+  end
+  return scr
+end
+
+-- ===========================================================================
+-- RUNS
+-- ===========================================================================
+local function runDetail(r)
+  local scr = { title = 'Run' }
+  function scr.draw()
+    bgFill()
+    local s = scrollBegin('rundetail', 94, BOTTOM)
+    local y = 104
+    local col = r.crashed and T.red or MONEY_GREEN
+    rect(16, y, SW - 16, y + 120, mix(T.cell, col, 0.14), 20)
+    rectLine(16, y, SW - 16, y + 120, A(col, 0.6), 20, 2)
+    text(r.crashed and 'CRASHED' or (r.pb and 'NEW PERSONAL BEST' or 'BANKED'), 11, 34, y + 14, col, F.b)
+    text(HESI.fmt(r.score), 44, 34, y + 32, T.white, F.numb)
+    text((r.crashed and '' or '+') .. money(r.pay or 0), 14, SW - 34, y + 18, MONEY_GREEN, F.numb, 1)
+    if (r.boost or 1) > 1 then text('x' .. r.boost .. ' boost', 12, SW - 34, y + 40, rgbm(0.8, 0.5, 1, 1), F.b, 1) end
+    y = y + 134
+    W.groupBg(y, 4)
+    W.row('rd.car', 'Car', y, { value = r.car, first = true })
+    W.row('rd.trk', 'Track', y + 46, { value = r.track ~= '' and r.track or '—' })
+    W.row('rd.when', 'When', y + 92, { value = os.date('%b %d, %H:%M', r.t) })
+    W.row('rd.dur', 'Run time', y + 138, { value = string.format('%d:%02d', math.floor(r.time / 60), r.time % 60), last = true })
+    y = y + 200
+    y = tileRow(y, { { 'TOP SPEED', r.top .. ' km/h' }, { 'AVG SPEED', (r.avg or 0) .. ' km/h' }, { 'BEST MULT', string.format('x%.1f', r.mult or 1), GOLD } })
+    y = tileRow(y, { { 'NEAR MISS', tostring(r.near or 0) }, { 'CLOSE CALL', tostring(r.close or 0) }, { 'LANE SPLIT', tostring(r.split or 0) } })
+    if r.fx and r.fx ~= '' then
+      y = W.sectionHeader('Power-ups used', y)
+      rect(LIST.x, y, LIST.x + LIST.w, y + 44, T.cell, 14)
+      textFit(r.fx, 14, LIST.x + 16, y + 12, LIST.w - 32, rgbm(0.8, 0.5, 1, 1), F.sb)
+      y = y + 56
+    end
+    scrollEnd(s, y + 20)
+    navBar('Run', { back = 'Runs' })
+  end
+  return scr
+end
+
+function APPMOD.Runs.root()
+  local scr = { title = 'Runs' }
+  local tab = 1
+  function scr.draw()
+    if scr.setTab then tab = scr.setTab scr.setTab = nil end
+    bgFill()
+    local s = scrollBegin('runs', 50, BOTTOM)
+    local y = largeTitle('Runs', 96, s.y)
+    local runs = XM.jget('runLog', {})
+    local best, top, pays = 0, 0, 0
+    for _, r in ipairs(runs) do
+      if not r.crashed and r.score > best then best = r.score end
+      if r.top > top then top = r.top end
+      pays = pays + (r.pay or 0)
+    end
+    -- what you're driving right now
+    local carNow = ac.getCarName(0) or '—'
+    textFit('Driving ' .. carNow .. ((ac.getTrackName and ac.getTrackName() ~= '') and (' · ' .. ac.getTrackName()) or ''), 13, 16, y - 14, SW - 32, T.label2, F.m)
+    y = tileRow(y + 6, { { 'RUNS', tostring(#runs) }, { 'BEST BANK', HESI.fmt(best), GOLD }, { 'TOP SPEED', top .. ' km/h' } })
+    tab = W.segmented('rn.tab', { 'Runs', 'Garage' }, tab, 16, y, SW - 32)
+    y = y + 46
+    if #runs == 0 then
+      glyph('STOPWATCH', SW / 2 - 20, y + 20, 40, T.label3)
+      text('No runs logged yet', 15, SW / 2, y + 72, T.label2, F.sb, 0.5)
+      text('Drive past ' .. HESI.startSpeed .. ' km/h to start one.', 12, SW / 2, y + 96, T.label3, F.r, 0.5)
+      y = y + 130
+    elseif tab == 1 then
+      rect(LIST.x, y, LIST.x + LIST.w, y + #runs * 62, T.cell, 14)
+      if S.thick and T.border then rectLine(LIST.x, y, LIST.x + LIST.w, y + #runs * 62, T.border, 14, 1.5) end
+      for i, r in ipairs(runs) do
+        local yy = y + (i - 1) * 62
+        if visible(s, yy, 62) then
+          local fired, pressed = tap('run' .. i, LIST.x, yy, LIST.x + LIST.w, yy + 62)
+          if pressed then rect(LIST.x, yy, LIST.x + LIST.w, yy + 62, rgbm(1, 1, 1, 0.06), 14) end
+          local col = r.crashed and T.red or MONEY_GREEN
+          rect(LIST.x + 10, yy + 14, LIST.x + 14, yy + 48, col, 2)
+          textFit(r.car, 15, LIST.x + 26, yy + 9, LIST.w - 150, T.label, F.sb)
+          textFit(string.format('%d km/h top · %s%s', r.top, ago(r.t), (r.boost or 1) > 1 and ('  ·  x' .. r.boost) or ''), 12, LIST.x + 26, yy + 33, LIST.w - 150, T.label2)
+          text(HESI.fmt(r.score), 17, LIST.x + LIST.w - 14, yy + 11, r.crashed and T.label2 or T.white, F.numb, 1)
+          text((r.crashed and 'crashed' or (r.pb and 'new PB' or 'banked')), 11, LIST.x + LIST.w - 14, yy + 35, col, F.b, 1)
+          if i < #runs then line(LIST.x + 26, yy + 62, LIST.x + LIST.w, yy + 62, T.sep, 1) end
+          if fired then navPush(runDetail(r)) end
+        end
+      end
+      y = y + #runs * 62
+    else
+      -- the garage: every car you've run, and how it did
+      local cars, order = {}, {}
+      for _, r in ipairs(runs) do
+        local c = cars[r.car]
+        if not c then c = { car = r.car, n = 0, crashes = 0, best = 0, top = 0, last = r.t, pay = 0 } cars[r.car] = c order[#order + 1] = c end
+        c.n = c.n + 1
+        if r.crashed then c.crashes = c.crashes + 1 elseif r.score > c.best then c.best = r.score end
+        c.top = math.max(c.top, r.top)
+        c.last = math.max(c.last, r.t)
+        c.pay = c.pay + (r.pay or 0)
+      end
+      table.sort(order, function(a, b) return a.last > b.last end)
+      for _, c in ipairs(order) do
+        local now = c.car == carNow
+        rect(16, y, SW - 16, y + 104, now and A(accent(), 0.14) or T.cell, 18)
+        if S.thick and T.border then rectLine(16, y, SW - 16, y + 104, now and accent() or T.border, 18, 1.5) end
+        textFit(c.car, 16, 32, y + 12, SW - 150, T.white, F.sb)
+        text(now and 'DRIVING NOW' or ('last ' .. ago(c.last)), 10, SW - 32, y + 15, now and accent() or T.label2, F.b, 1)
+        local items = { { c.n .. '', 'RUNS' }, { HESI.fmt(c.best), 'BEST' }, { c.top .. '', 'TOP KM/H' }, { c.crashes .. '', 'CRASHES' } }
+        local iw = (SW - 64) / 4
+        for i, it in ipairs(items) do
+          text(it[1], 16, 32 + (i - 1) * iw, y + 46, i == 2 and GOLD or T.white, F.numb)
+          text(it[2], 9, 32 + (i - 1) * iw, y + 72, T.label2, F.b)
+        end
+        y = y + 116
+      end
+    end
+    y = W.sectionFooter('Every run is logged with the car you drove, your top speed and what you earned. The latest 120 are kept on this PC.', y + 6)
+    scrollEnd(s, y + 24)
+    navBar('Runs', { large = true }, s.y)
+  end
+  return scr
+end
+
+-- ===========================================================================
+-- VAULT (your own music, queue + search)
+-- ===========================================================================
+function APPMOD.Vault.root()
+  local scr = { title = 'Vault' }
+  local tab = 1
+  local query = ''
+  function scr.draw()
+    if scr.setTab then tab = scr.setTab scr.setTab = nil end
+    bgFill()
+    local s = scrollBegin('vault', 50, BOTTOM)
+    local y = largeTitle('Vault', 96, s.y)
+    local cur = VAULT.cur
+    local ac1 = accent()
+    if S.vaultFolder == '' then
+      rect(16, y, SW - 16, y + 230, T.cell, 20)
+      glyph('MUSIC', SW / 2 - 24, y + 22, 48, ac1)
+      text('Your music, in the game', 18, SW / 2, y + 84, T.white, F.sb, 0.5)
+      textBox('Point the Vault at the folder where your unreleased tracks live (for example, where you save downloads from Untitled). Then search, queue and play them without leaving AC.', 13, 36, y + 112, SW - 36, y + 172, T.label2)
+      if W.button('vt.pick', 'Choose music folder', 32, y + 176, SW - 64, 40, 'filled') then VAULT.pickFolder() end
+      y = y + 246
+      if W.button('vt.untitled0', 'Open Untitled in browser', 16, y, SW - 32, 44, 'gray') then VAULT.openUntitled() end
+      y = W.sectionFooter('AC can’t show websites inside the game, so download your tracks from Untitled into a folder, then play them here.', y + 56)
+    else
+      -- now playing
+      local cs = 190
+      local cx = SW / 2
+      MEDIA.cover(VAULT.media(), cx - cs / 2, y, cx + cs / 2, y + cs, 22)
+      y = y + cs + 18
+      if cur then
+        textFit(cur.title, 20, cx, y, SW - 56, T.white, F.b, 0.5)
+        textFit(cur.artist ~= '' and cur.artist or cur.folder, 14, cx, y + 28, SW - 56, T.label2, F.m, 0.5)
+        y = y + 56
+        local dur, pos = VAULT.duration(), VAULT.position()
+        local v, ch = W.slider('vt.seek', dur > 0 and pos / dur or 0, 0, 1, 36, y, SW - 72, T.white)
+        if ch then VAULT.seek(v) end
+        text(MEDIA.fmtTime(pos), 11, 36, y + 28, T.label2, F.num)
+        text(MEDIA.fmtTime(dur), 11, SW - 36, y + 28, T.label2, F.num, 1)
+        y = y + 54
+      else
+        text('Nothing playing', 18, cx, y, T.white, F.sb, 0.5)
+        text('Pick a track from the library', 13, cx, y + 26, T.label2, F.r, 0.5)
+        y = y + 64
+      end
+      if MEDIA.button('vt.prev', 'PREVIOUS', cx - 84, y + 22, 28, T.white) then VAULT.prev() end
+      if MEDIA.button('vt.pp', VAULT.playing() and 'PAUSE' or 'PLAY', cx, y + 22, 40, T.white) then VAULT.toggle() end
+      if MEDIA.button('vt.next', 'NEXT', cx + 84, y + 22, 28, T.white) then VAULT.next() end
+      y = y + 66
+      local bw = (SW - 32 - 16) / 3
+      if smallButton('vt.shuf', S.vaultShuffle and 'Shuffle on' or 'Shuffle', 16, y, bw, 32, S.vaultShuffle and 'filled' or 'gray') then S.vaultShuffle = not S.vaultShuffle end
+      if smallButton('vt.rep', ({ 'Repeat off', 'Repeat all', 'Repeat one' })[S.vaultRepeat], 16 + bw + 8, y, bw, 32, S.vaultRepeat > 1 and 'filled' or 'gray') then S.vaultRepeat = S.vaultRepeat % 3 + 1 end
+      if smallButton('vt.stop', 'Stop', 16 + (bw + 8) * 2, y, bw, 32, 'danger') then VAULT.stop() end
+      y = y + 48
+      tab = W.segmented('vt.tab', { 'Up next (' .. #VAULT.queue .. ')', 'Library', 'Settings' }, tab, 16, y, SW - 32)
+      y = y + 46
+      if tab == 1 then
+        if #VAULT.queue == 0 then
+          text('Your queue is empty', 14, SW / 2, y + 14, T.label2, F.sb, 0.5)
+          text('Add songs from the Library tab with +Queue or Next.', 12, SW / 2, y + 38, T.label3, F.r, 0.5)
+          y = y + 76
+        else
+          rect(LIST.x, y, LIST.x + LIST.w, y + #VAULT.queue * 54, T.cell, 14)
+          local removeAt, upAt
+          for i, t in ipairs(VAULT.queue) do
+            local yy = y + (i - 1) * 54
+            text(tostring(i), 14, LIST.x + 20, yy + 17, T.label2, F.numb, 0.5)
+            textFit(t.title, 15, LIST.x + 40, yy + 8, LIST.w - 130, T.label, F.sb)
+            textFit(t.artist ~= '' and t.artist or t.folder, 12, LIST.x + 40, yy + 30, LIST.w - 130, T.label2)
+            if i > 1 and smallButton('vq.up' .. i, 'Up', LIST.x + LIST.w - 100, yy + 10, 40, 32, 'gray') then upAt = i end
+            if smallButton('vq.rm' .. i, 'X', LIST.x + LIST.w - 52, yy + 10, 40, 32, 'danger') then removeAt = i end
+            if i < #VAULT.queue then line(LIST.x + 40, yy + 54, LIST.x + LIST.w, yy + 54, T.sep, 1) end
+          end
+          if upAt then VAULT.moveUp(upAt) end
+          if removeAt then VAULT.dequeue(removeAt) end
+          y = y + #VAULT.queue * 54 + 10
+          if W.button('vq.clear', 'Clear queue', 16, y, SW - 32, 38, 'gray') then VAULT.clearQueue() end
+          y = y + 50
+        end
+      elseif tab == 2 then
+        query = W.field('vt.q', query, 'Search your music', 16, y, SW - 32, 38, { icon = '🔍' })
+        y = y + 50
+        local list = VAULT.search(query)
+        if #list == 0 then
+          text(#VAULT.tracks == 0 and 'No audio files found in that folder' or 'No matches', 14, SW / 2, y + 16, T.label2, F.r, 0.5)
+          y = y + 60
+        else
+          local shown = math.min(#list, 300)
+          rect(LIST.x, y, LIST.x + LIST.w, y + shown * 58, T.cell, 14)
+          for i = 1, shown do
+            local t = list[i]
+            local yy = y + (i - 1) * 58
+            if visible(s, yy, 58) then
+              local fired, pressed = tap('vl' .. i, LIST.x, yy, LIST.x + LIST.w - 116, yy + 58)
+              if pressed then rect(LIST.x, yy, LIST.x + LIST.w, yy + 58, rgbm(1, 1, 1, 0.06), 14) end
+              local playing = VAULT.cur == t
+              textFit(t.title, 15, LIST.x + 16, yy + 9, LIST.w - 140, playing and ac1 or T.label, F.sb)
+              textFit(t.artist ~= '' and t.artist or t.folder, 12, LIST.x + 16, yy + 33, LIST.w - 140, T.label2)
+              if smallButton('vl.n' .. i, 'Next', LIST.x + LIST.w - 112, yy + 13, 48, 32, 'tinted') then VAULT.playNext(t) toast('Playing next', t.title, '♫') end
+              if smallButton('vl.q' .. i, '+', LIST.x + LIST.w - 58, yy + 13, 46, 32, 'gray') then VAULT.enqueue(t) toast('Added to queue', t.title, '♫') end
+              if i < shown then line(LIST.x + 16, yy + 58, LIST.x + LIST.w, yy + 58, T.sep, 1) end
+              if fired then VAULT.play(t) end
+            end
+          end
+          y = y + shown * 58 + 6
+          if #list > shown then y = W.sectionFooter('Showing the first ' .. shown .. ' of ' .. #list .. '. Search to narrow it down.', y) end
+        end
+      else
+        W.groupBg(y, 3)
+        W.row('vs.f', 'Music folder', y, { first = true, value = (S.vaultFolder:match('[^/\\]+$') or S.vaultFolder) })
+        if W.row('vs.change', 'Change folder', y + 46, { chevron = true }) then VAULT.pickFolder() end
+        if W.row('vs.rescan', 'Rescan (' .. #VAULT.tracks .. ' tracks)', y + 92, { chevron = true, last = true }) then VAULT.scan() toast('Vault', #VAULT.tracks .. ' tracks', '♫') end
+        y = y + 150
+        y = W.sectionHeader('Untitled', y)
+        rect(LIST.x, y, LIST.x + LIST.w, y + 56, T.cell, 14)
+        S.untitledUrl = W.field('vs.url', S.untitledUrl, 'https://untitled.stream', LIST.x + 10, y + 10, LIST.w - 20, 36)
+        y = y + 68
+        if W.button('vs.open', 'Open Untitled in browser', 16, y, SW - 32, 44, 'gray') then VAULT.openUntitled() end
+        y = W.sectionFooter('Download your unreleased tracks into your Vault folder and they show up here. Cover art: put cover.jpg in the folder, or name an image like the song.', y + 56)
+        y = W.sectionHeader('Volume', y)
+        rect(LIST.x, y, LIST.x + LIST.w, y + 56, T.cell, 14)
+        local v, ch = W.slider('vs.vol', S.vaultVol, 0, 1, LIST.x + 20, y + 14, LIST.w - 40)
+        if ch then VAULT.setVolume(v) end
+        y = y + 70
+      end
+    end
+    scrollEnd(s, y + 24)
+    navBar('Vault', { large = true }, s.y)
+  end
+  return scr
+end
+
+
+-- ===========================================================================
+-- WELCOME SCREEN (greets you when you join; fully editable)
+-- ===========================================================================
+local WEL = { t0 = -100, active = false }
+XM.welcome = WEL
+
+local function resolveText(str)
+  local me = ac.getDriverName(0) or 'driver'
+  local sim = ac.getSim()
+  local server = sim.isOnlineRace and (ac.getServerName and ac.getServerName() or 'the server') or 'the track'
+  local players = #getPlayers() + 1
+  local r = str
+  r = r:gsub('{name}', function() return me end)
+  r = r:gsub('{server}', function() return server end)
+  r = r:gsub('{car}', function() return ac.getCarName(0) or 'your car' end)
+  r = r:gsub('{track}', function() return (ac.getTrackName and ac.getTrackName()) or 'the track' end)
+  r = r:gsub('{players}', function() return tostring(players) end)
+  return r
+end
+WEL.resolve = resolveText
+
+function WEL.trigger(force)
+  if not S.welcomeOn and not force then return end
+  WEL.t0, WEL.active = clock(), true
+  if (S.welcomeStyle == 2 or S.welcomeStyle == 3) and not ac.isWindowOpen('main') then ac.setWindowOpen('main', true) end
+end
+function WEL.age() return clock() - WEL.t0 end
+function WEL.alive() return WEL.active and WEL.age() < S.welcomeSecs + 1 end
+
+local function statsLine()
+  local parts = {}
+  if S.hesiPB > 0 then parts[#parts + 1] = 'PB ' .. HESI.fmt(S.hesiPB) end
+  parts[#parts + 1] = money(XM.cash())
+  parts[#parts + 1] = (#getPlayers() + 1) .. ' online'
+  return table.concat(parts, '   ·   ')
+end
+
+-- slide-down card on the action bar window
+function WEL.drawBanner(cx)
+  if not WEL.alive() or (S.welcomeStyle ~= 1 and S.welcomeStyle ~= 3) then return end
+  local t = WEL.age()
+  local k = clamp(t / 0.5, 0, 1)
+  k = 1 - (1 - k) ^ 3
+  local out = clamp((t - S.welcomeSecs) / 0.6, 0, 1)
+  local y = -110 + 118 * k - 120 * out * out
+  local w, h = 440, S.welcomeStats and 92 or 72
+  local x1, x2 = cx - w / 2, cx + w / 2
+  local ac1 = accent()
+  for g = 3, 1, -1 do rect(x1 - g * 4, y - g * 4, x2 + g * 4, y + h + g * 4, A(ac1, 0.07 / g), 22 + g * 4) end
+  rect(x1, y, x2, y + h, rgbm(0.03, 0.03, 0.05, 0.9), 22)
+  ui.drawRectFilledMultiColor(P(x1 + 22, y), P(x2 - 22, y + 2), A(ac1, 0), A(ac1, 1), A(ac1, 1), A(ac1, 0))
+  rectLine(x1, y, x2, y + h, A(ac1, 0.6), 22, 1.5)
+  avatar(ac.getDriverName(0) or 'You', x1 + 16, y + (h - 48) / 2, 48)
+  textFit(resolveText(S.welcomeTitle), 20, x1 + 78, y + 12, w - 100, T.white, F.b)
+  textFit(resolveText(S.welcomeTag), 13, x1 + 78, y + 40, w - 100, A(T.white, 0.7), F.m)
+  if S.welcomeStats then text(statsLine(), 11, x1 + 78, y + 66, ac1, F.num) end
+end
+
+-- full-screen takeover on the phone
+function WEL.drawPhone()
+  if not WEL.alive() or (S.welcomeStyle ~= 2 and S.welcomeStyle ~= 3) then return end
+  local t = WEL.age()
+  local a = clamp(t / 0.45, 0, 1) * (1 - clamp((t - S.welcomeSecs) / 0.6, 0, 1))
+  local oldA = D.a
+  D.a = oldA * a
+  local ac1 = accent()
+  rect(0, 0, SW, SH, rgbm(0.02, 0.02, 0.04, 1), SCREEN.r)
+  ui.drawRectFilledMultiColor(P(0, 0), P(SW, SH * 0.75), A(ac1, 0.55), A(ac1, 0.55), A(ac1, 0), A(ac1, 0))
+  local me = ac.getDriverName(0) or 'You'
+  local pulse = 0.5 + 0.5 * math.sin(t * 3)
+  for g = 3, 1, -1 do circle(SW / 2, 210, 54 + g * 8 + pulse * 4, A(ac1, 0.10 / g)) end
+  avatar(me, SW / 2 - 50, 160, 100)
+  textBox(resolveText(S.welcomeTitle), 30, 30, 290, SW - 30, 380, T.white, F.b)
+  textBox(resolveText(S.welcomeTag), 15, 30, 352, SW - 30, 410, A(T.white, 0.7), F.m)
+  if S.welcomeStats then
+    local items = { { 'PERSONAL BEST', HESI.fmt(S.hesiPB) }, { 'WALLET', money(XM.cash()) }, { 'ONLINE', tostring(#getPlayers() + 1) } }
+    local tw = (SW - 32 - 16) / 3
+    for i, it in ipairs(items) do
+      local x = 16 + (i - 1) * (tw + 8)
+      rect(x, 470, x + tw, 540, A(T.white, 0.08), 16)
+      text(it[1], 9, x + tw / 2, 484, A(T.white, 0.6), F.b, 0.5)
+      textFit(it[2], 17, x + tw / 2, 504, tw - 12, T.white, F.numb, 0.5)
+    end
+  end
+  text('Tap to continue', 13, SW / 2, 650, A(T.white, 0.4 + 0.4 * pulse), F.m, 0.5)
+  if tap('welcome.dismiss', 0, 0, SW, SH) then WEL.active = false end
+  D.a = oldA
+end
+
+local function welcomeEditor()
+  local scr = { title = 'Welcome Screen' }
+  function scr.draw()
+    bgFill()
+    local s = scrollBegin('welcome', 94, BOTTOM)
+    local y = 104
+    W.groupBg(y, 2)
+    S.welcomeOn = W.toggleRow('wl.on', 'Greet me when I join', S.welcomeOn, y, { first = true, icon = '👋', iconBg = rgbm(1, 0.6, 0.2, 1) })
+    S.greetJoin = W.toggleRow('wl.greet', 'Welcome new players', S.greetJoin, y + 46, { last = true, icon = '👥', iconBg = rgbm(0.3, 0.7, 1, 1) })
+    y = W.sectionFooter('New players get a welcome in the group chat from whoever has been on the server longest, so it isn’t spammed.', y + 92)
+    y = W.sectionHeader('Style', y)
+    S.welcomeStyle = W.segmented('wl.style', { 'Banner', 'Phone', 'Both' }, S.welcomeStyle, 16, y, SW - 32)
+    y = y + 50
+    y = W.sectionHeader('Your message', y)
+    rect(LIST.x, y, LIST.x + LIST.w, y + 112, T.cell, 14)
+    S.welcomeTitle = W.field('wl.title', S.welcomeTitle, 'Title', LIST.x + 10, y + 10, LIST.w - 20, 40)
+    S.welcomeTag = W.field('wl.tag', S.welcomeTag, 'Tagline', LIST.x + 10, y + 60, LIST.w - 20, 40)
+    y = y + 124
+    y = W.sectionFooter('You can use {name}, {server}, {car}, {track} and {players} and they fill in automatically.', y)
+    W.groupBg(y, 1)
+    S.welcomeStats = W.toggleRow('wl.stats', 'Show my stats', S.welcomeStats, y, { first = true, last = true })
+    y = y + 56
+    rect(LIST.x, y, LIST.x + LIST.w, y + 74, T.cell, 14)
+    local v, ch = W.sliderRow('wl.secs', 'Stays on screen', S.welcomeSecs, 2, 12, '%d s', y, { last = true })
+    if ch then S.welcomeSecs = math.floor(v + 0.5) end
+    y = y + 90
+    y = W.sectionHeader('Preview', y)
+    local px = LIST.x
+    rect(px, y, px + LIST.w, y + 120, T.cell, 18)
+    avatar(ac.getDriverName(0) or 'You', px + 16, y + 20, 56)
+    textFit(resolveText(S.welcomeTitle), 20, px + 88, y + 24, LIST.w - 104, T.white, F.b)
+    textFit(resolveText(S.welcomeTag), 13, px + 88, y + 54, LIST.w - 104, T.label2, F.m)
+    if S.welcomeStats then textFit(statsLine(), 11, px + 88, y + 82, LIST.w - 104, accent(), F.num) end
+    y = y + 134
+    if W.button('wl.play', 'Play it now', 16, y, SW - 32, 46, 'filled') then WEL.trigger(true) end
+    y = y + 60
+    scrollEnd(s, y + 20)
+    navBar('Welcome Screen', { back = 'Personalize' })
+  end
+  return scr
+end
+APPMOD.Themes.welcome = welcomeEditor
+
+end
+-- ===========================================================================
 -- App registry
 -- ===========================================================================
 
@@ -5084,6 +6819,11 @@ local APPS = {
   { id = 'cutup',    name = 'Cut-Up',   icon = '@BURN', c1 = rgbm(1.00, 0.55, 0.10, 1), c2 = rgbm(0.85, 0.10, 0.05, 1), root = APPMOD.CutUp.root },
   { id = 'themes',   name = 'Personalize',   icon = '@SLIDERS', c1 = rgbm(0.95, 0.45, 0.95, 1), c2 = rgbm(0.40, 0.20, 0.85, 1), root = APPMOD.Themes.root },
   { id = 'leaders',  name = 'Leaderboards', icon = '@LEADERBOARD', c1 = rgbm(1.00, 0.80, 0.30, 1), c2 = rgbm(0.90, 0.50, 0.05, 1), root = APPMOD.Leaders.root },
+  { id = 'bank',     name = 'Bank',     icon = '@STATS', c1 = rgbm(0.30, 0.85, 0.55, 1), c2 = rgbm(0.05, 0.55, 0.35, 1), root = APPMOD.Bank.root },
+  { id = 'market',   name = 'Market',   icon = '@UP_ALT', c1 = rgbm(0.35, 0.80, 1.00, 1), c2 = rgbm(0.10, 0.45, 0.85, 1), root = APPMOD.Market.root },
+  { id = 'power',    name = 'Power-Ups', icon = '@CONSTELLATION', c1 = rgbm(0.80, 0.45, 1.00, 1), c2 = rgbm(0.50, 0.15, 0.90, 1), root = APPMOD.Power.root },
+  { id = 'runs',     name = 'Runs',     icon = '@STOPWATCH', c1 = rgbm(1.00, 0.60, 0.25, 1), c2 = rgbm(0.90, 0.30, 0.10, 1), root = APPMOD.Runs.root },
+  { id = 'vault',    name = 'Vault',    icon = '@SAVE', c1 = rgbm(0.25, 0.25, 0.30, 1), c2 = rgbm(0.05, 0.05, 0.08, 1), root = APPMOD.Vault.root },
   { id = 'music',    name = 'Music',    icon = '@MUSIC', c1 = rgbm(1.00, 0.36, 0.45, 1), c2 = rgbm(0.86, 0.10, 0.30, 1), root = APPMOD.Music.root },
   { id = 'weather',  name = 'Weather',  icon = '@WEATHER_FEW_CLOUDS', c1 = rgbm(0.45, 0.75, 1.00, 1), c2 = rgbm(0.15, 0.45, 0.90, 1), root = APPMOD.Weather.root },
   { id = 'library',  name = 'Apps',     icon = '@APPS', c1 = rgbm(0.45, 0.50, 1.00, 1), c2 = rgbm(0.25, 0.25, 0.80, 1), root = APPMOD.Library.root },
@@ -5093,8 +6833,9 @@ local APP_BY_ID = {}
 APPMOD.APPS = APPS
 for _, a in ipairs(APPS) do APP_BY_ID[a.id] = a end
 local DOCK = { 'messages', 'music', 'camera', 'settings' }
-local GRID = { 'cutup', 'leaders', 'maps', 'friends', 'walk', 'video', 'chase', 'livery', 'skins', 'plates', 'hud', 'weather', 'themes', 'library' }
+local GRID = { 'cutup', 'leaders', 'maps', 'friends', 'walk', 'video', 'chase', 'livery', 'skins', 'plates', 'hud', 'weather', 'themes', 'library', 'runs', 'power', 'bank', 'market', 'vault' }
 
+APPMOD.openApp = function(id) APPMOD.openAppImpl(id) end
 local appIconRects = {}   -- id -> {x, y, size} for open/close zoom
 
 local function openApp(id)
@@ -5105,6 +6846,8 @@ local function openApp(id)
   local r = appIconRects[id]
   NAV.trans = { kind = 'open', t = 0, icon = r }
 end
+
+APPMOD.openAppImpl = openApp
 
 local function closeApp()
   if not NAV.app then return end
@@ -5132,6 +6875,7 @@ if rawget(_G, '__ACPHONE_TEST') then
   T_.addMessage, T_.threadScreen, T_.navPush, T_.setMinimized, T_.PHONE = addMessage, threadScreen, navPush, setMinimized, PHONE
   T_.walkStart, T_.videoStart, T_.S, T_.IN, T_.UPD = walkStart, videoStart, S, IN, UPD
   T_.HESI, T_.applyTheme, T_.buildFonts = HESI, applyTheme, buildFonts
+  T_.XM, T_.APPMOD, T_.VIDEO_SHOTS, T_.camRelease, T_.MEDIA = XM, APPMOD, VIDEO_SHOTS, camRelease, MEDIA
   T_.LIVERY = { selfTest = LIVERY_API.selfTest, apply = LIVERY_API.apply, cfg = LIVERY_API.cfg, shaderOK = LIVERY_API.shaderOK }
 end
 
@@ -5740,7 +7484,7 @@ local function homePage1(ox)
     if not listHas(S.hiddenApps, id) then
       n = n + 1
       local c, r = (n - 1) % COLS, math.floor((n - 1) / COLS)
-      local x, y = 24 + c * (ICON + GAPX), y0 + r * 92
+      local x, y = 24 + c * (ICON + GAPX), y0 + r * 92 - r * 8 * (#GRID > 16 and 1 or 0)
       appIconDraw(id, a.icon, a.name, x, y, a.c1, a.c2, a.badge and a.badge() or 0, function() openApp(id) end)
     end
   end
@@ -6001,6 +7745,7 @@ function script.windowMain(dt)
     IN.locked = IN.locked or SHEET.kind ~= nil
     compose()
   end
+  XM.welcome.drawPhone()
   D.x, D.y = baseX, baseY
   IN.locked = (NAV.trans ~= nil) or openAnim < 1
   sheets()
@@ -6204,17 +7949,22 @@ function script.actionBarDraw(dt)
       text(tostring(math.floor(car and car.speedKmh or 0)), 26, x2 - 58, y0 + 12, T.white, F.numb, 1)
       text('KM/H', 9, x2 - 30, y0 + 22, T.label2, F.b, 0.5)
     end
+    if #(HESI.pw.names or {}) > 0 and HESI.slowT <= 0.3 then
+      text(table.concat(HESI.pw.names, '  ·  '):upper(), 10, cx, y0 + bh + 8, rgbm(0.8, 0.55, 1, 0.95), F.b, 0.5)
+    end
     if HESI.slowT > 0.3 then
       local w = 170
       rect(cx - w / 2, y0 + bh + 6, cx + w / 2, y0 + bh + 28, rgbm(0.1, 0.55, 0.3, 0.92), 11)
-      text(string.format('BANKING  %.1f', math.max(0, 3 - HESI.slowT)), 12, cx, y0 + bh + 10, T.white, F.numb, 0.5)
+      text(string.format('BANKING  %.1f', math.max(0, HESI.bankTime - HESI.slowT)), 12, cx, y0 + bh + 10, T.white, F.numb, 0.5)
     end
   else
-    local label = S.hesiOn and ('@BURN  PB ' .. HESI.fmt(S.hesiPB) .. '   ·   ' .. HESI.startSpeed .. '+ KM/H TO START') or '@BURN  CUT-UP OFF'
+    local armed = #XM.equippedList()
+    local label = S.hesiOn and ('@BURN  PB ' .. HESI.fmt(S.hesiPB) .. '   ·   ' .. XM.money(XM.cash()) .. (armed > 0 and ('   ·   ' .. armed .. ' POWER-UP' .. (armed > 1 and 'S' or '') .. ' READY') or '') .. '   ·   ' .. HESI.startSpeed .. '+ KM/H') or '@BURN  CUT-UP OFF'
     local w = measure(label, 12, F.numb).x + 34
     rect(cx - w / 2, y0 + 24, cx + w / 2, y0 + 52, rgbm(0.03, 0.03, 0.04, 0.6), 14)
     text(label, 12, cx, y0 + 31, rgbm(1, 1, 1, 0.85), F.numb, 0.5)
   end
+  XM.welcome.drawBanner(cx)
   if HESI.crashFlash > 0 then
     local f = HESI.crashFlash
     local oldA = D.a
@@ -6223,7 +7973,7 @@ function script.actionBarDraw(dt)
     rect(cx - 150 + shake, 8, cx + 150 + shake, 70, T.red, 31)
     D.a = oldA * clamp(f * 1.6, 0, 1)
     text('CRASHED', 30, cx + shake, 12, T.white, F.numb, 0.5)
-    text('-' .. HESI.fmt(HESI.crashLost or 0), 15, cx + shake, 46, rgbm(1, 0.85, 0.85, 1), F.numb, 0.5)
+    text('-' .. HESI.fmt(HESI.crashLost or 0) .. '   ' .. (HESI.lastRun and HESI.lastRun.pay and ('+' .. XM.money(HESI.lastRun.pay)) or ''), 15, cx + shake, 46, rgbm(1, 0.85, 0.85, 1), F.numb, 0.5)
     D.a = oldA
   elseif HESI.bankFlash > 0 then
     local f = HESI.bankFlash
@@ -6233,7 +7983,8 @@ function script.actionBarDraw(dt)
     rect(cx - 160, 8, cx + 160, 70, gr, 31)
     D.a = oldA * clamp(f * 1.6, 0, 1)
     text('BANKED', 14, cx, 10, T.white, F.numb, 0.5)
-    text('+' .. HESI.fmt(HESI.lastBank), 28 + math.floor(f * 6), cx, 28, T.white, F.numb, 0.5)
+    text('+' .. HESI.fmt(HESI.lastBank), 28 + math.floor(f * 6), cx, 26, T.white, F.numb, 0.5)
+    if HESI.lastRun and HESI.lastRun.pay then text('+' .. XM.money(HESI.lastRun.pay) .. ' cash', 12, cx, 58, rgbm(0.85, 1, 0.9, 1), F.numb, 0.5) end
     D.a = oldA
   end
 end
@@ -6242,10 +7993,9 @@ end
 -- Background work
 -- ===========================================================================
 
-local started = false
 function script.update(dt)
-  if not started then
-    started = true
+  if not SHEET.started then
+    SHEET.started = true
     pcall(LIVERY_API.selfTest)
     setTimeout(function()
       if ac.getSim().isOnlineRace then
@@ -6254,6 +8004,7 @@ function script.update(dt)
       end
       if S.plateAutoApply and PL.text ~= '' then PL.apply(0, PL.text, PL.country) PL.broadcast() end
       UPD.announce()
+      XM.welcome.trigger()
       if S.actionBar then ac.setWindowOpen('actionbar', true) end
       local lv = LIVERY_API.cfg()
       if lv and lv.on then LIVERY_API.apply(0, lv) LIVERY_API.broadcast() end
@@ -6267,6 +8018,8 @@ function script.update(dt)
   liveUpdate()
   UPD.tick()
   HESI.update(dt)
+  XM.tick(dt)
+  XM.vault.update(dt)
   -- walking/video/photo stop if the phone is closed while minimised? keep running; chase handled in camUpdate
 end
 

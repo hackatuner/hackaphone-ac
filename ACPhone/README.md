@@ -1,6 +1,16 @@
-# AC Phone v0.9
+# AC Phone v1.0
 
 An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everything is custom-drawn: no stock AC or ImGui boxes.
+
+## New in v1.0
+- **Power-Ups:** a power-up market with 2x, 3x, 5x, 7x and 10x score multipliers plus creative boosts: Ghost Shield (survive a crash), Traffic Magnet, Hyper Combo, Time Warp, Lucky Charm (jackpots), Overdrive, Cash Cow, Quick Bank, Head Start, PB Hunter and Mystery Crates. One multiplier and two boosts per run, used up when the run starts.
+- **Bank:** you earn cash for every run (banked pays more, crashes still pay). Card with your balance, savings that earn interest even while you're offline, send money to friends, activity log and a richest-drivers list.
+- **Market:** a live token exchange (Cut Coin, Nitro Bond, Grip Index, same prices for the whole server), player-to-player trading of power-ups and tokens, titles and permanent upgrades.
+- **Runs:** every Cut-Up run is logged with the car you drove, track, top speed, average speed, multiplier, near misses and cash. A Garage tab shows how each car performs.
+- **Vault:** play your own unreleased music in the game, with search, a play queue (Up Next), shuffle and repeat. Point it at the folder where you save tracks from Untitled. It controls the lock screen, island and Control Centre too.
+- **Camera angles:** every Video angle is fully editable (distance, height, speed, lens, aim point, roll, shake) with live preview and saved angles.
+- **Welcome screen:** a banner or full phone takeover greets you when you join, with your own message and stats. New players get a welcome in chat. Personalize › Welcome Screen.
+- **Album art wallpaper:** pick Actual art, Blurred, or Art + blur, with a blur slider.
 
 ## New in v0.9
 - **Cut-Up redesign:** the action bar and the Cut-Up app glow in the colour of your current tier, scores count up, and there is a tier ladder and a live event feed. Crashes shake and flash red; banks flash green.
@@ -67,6 +77,9 @@ An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everythi
 | **Skins** | Browse your car's skins with preview images and swap in-game. Syncs online. Works with Skin Companion. |
 | **Weather** | Live conditions: air and road temperature, wind, rain, wetness and time. Offline time slider, plus one tap to open Dream Realism Weather or Pure Planner. |
 | **Apps** | Your App Library: switch any installed app on or off. Star apps to put them on the home screen (swipe left). |
+| **Bank / Market / Power-Ups** | Money, savings, live exchange, player trading and the power-up shop. |
+| **Runs** | Your Cut-Up run log and garage. |
+| **Vault** | Your own music with queue and search. |
 | **Settings** | Status, notifications, phone hotkey, wallpaper and accent colour. |
 
 ## Using it
