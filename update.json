@@ -1,12 +1,12 @@
 {
-  "version": "1.2.2",
-  "build": 24,
-  "notes": "1.2.2: much stronger headlight and tail light colour (beams plus lamp glow), live status in the Car app.",
+  "version": "1.3.0",
+  "build": 25,
+  "notes": "1.3.0: three home pages with Car first on page 2, long-press to move or remove apps, Race Board podiums.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 411379
+      "size": 417886
     },
     {
       "path": "manifest.ini",
@@ -16,7 +16,7 @@
     {
       "path": "README.md",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/README.md",
-      "size": 11581
+      "size": 12095
     },
     {
       "path": "icon.png",

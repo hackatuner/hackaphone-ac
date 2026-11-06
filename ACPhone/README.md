@@ -2,6 +2,12 @@
 
 An iPhone-style phone for Assetto Corsa (Custom Shaders Patch Lua app). Everything is custom-drawn: no stock AC or ImGui boxes.
 
+## New in v1.3.0
+- **Three home pages.** Swipe between them. Car is the first app on page 2.
+- **Edit your home screen:** press and hold any app until it wiggles, then drag it to reorder or onto another page (drag to the screen edge to turn the page). Tap the minus to remove it; removed apps wait in a tray to add back. Tap Done when finished.
+- **Race Board:** podiums for most wins, fastest 0-60 mph and fastest 0-200 km/h.
+- Fonts now actually change; hold-to-flash; stronger headlight and tail light colour.
+
 ## New in v1.2.0
 - **Car app**: headlights, high beams, hazards, flash, daytime lights, driver door, headlight and tail light colours (tinted glow), plus bonnet, boot and extra doors when the car defines them as switches.
 - Phone stays open during races, live lap starts on movement, 15 fonts, Cut-Up standings.

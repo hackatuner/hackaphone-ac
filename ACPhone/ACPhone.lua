@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.2.2'
-local BUILD = 24
+local VERSION = '1.3.0'
+local BUILD = 25
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -8516,12 +8516,36 @@ end
 -- Home screen
 -- ===========================================================================
 
-local HOME = { page = 1, offset = 0, dragging = false }
+local HOME = { page = 1, offset = 0, dragging = false, edit = false, hits = {}, holdT = 0 }
+PHONE.home = HOME
 local ICON, COLS = 60, 4
 local GAPX = (SW - 48 - ICON * COLS) / (COLS - 1)
 
-local function appIconDraw(id, icon, label, x, y, c1, c2, badgeN, onTap, dot)
-  local fired, pressed = tap('icon.' .. id, x - 6, y - 6, x + ICON + 6, y + ICON + 24)
+local function appIconDraw(id, icon, label, x, y, c1, c2, badgeN, onTap, dot, slot)
+  local fired, pressed = false, false
+  local editing = slot and slot ~= 'drag' and HOME.edit
+  if slot == 'drag' then
+    -- the icon being carried: draw only
+  elseif editing then
+    -- edit mode: icons wiggle, a minus badge removes them, a press starts a drag
+    x = x + math.sin(clock() * 17 + slot.n) * 1.3
+    y = y + math.cos(clock() * 14 + slot.n * 1.7) * 0.9
+    HOME.hits[#HOME.hits + 1] = { id = id, x = x + slot.ox, y = y }
+  else
+    fired, pressed = tap('icon.' .. id, x - 6, y - 6, x + ICON + 6, y + ICON + 24)
+    if slot then
+      if pressed and not HOME.drag then
+        if HOME.holdId ~= id then HOME.holdId, HOME.holdT = id, 0 end
+        HOME.holdT = HOME.holdT + IN.dt
+        if math.abs(IN.m.x - IN.pressPos.x) < 10 and math.abs(IN.m.y - IN.pressPos.y) < 10 and HOME.holdT > 0.5 then
+          HOME.edit = true
+          HOME.drag = { id = id, x = x + slot.ox + ICON / 2, y = y + ICON / 2 }
+          IN.active = '__drag'
+          fired = false
+        end
+      elseif HOME.holdId == id then HOME.holdId = nil end
+    end
+  end
   local p = anim('icon.' .. id .. '#p', pressed and 1 or 0, 25)
   local sh = p * 3
   local style = S.iconStyle or 1
@@ -8553,7 +8577,13 @@ local function appIconDraw(id, icon, label, x, y, c1, c2, badgeN, onTap, dot)
     text(icon, 28, x + ICON / 2, y + 11, T.white, F.sb, 0.5)
   end
   if label then textFit(label, 12, x + ICON / 2, y + ICON + 5, ICON + 18, T.white, F.m, 0.5) end
-  if badgeN and badgeN > 0 then
+  if editing then
+    local rx, ry = x - 3, y - 3
+    if tap('rm.' .. id, rx - 8, ry - 8, rx + 26, ry + 26) then HOME.remove(id) end
+    circle(rx + 9, ry + 9, 10, rgbm(0.28, 0.28, 0.30, 1))
+    rect(rx + 4, ry + 8, rx + 14, ry + 10.4, T.white, 1)
+  end
+  if badgeN and badgeN > 0 and not editing then
     local s = badgeN > 99 and '99+' or tostring(badgeN)
     local bw = math.max(22, measure(s, 13, F.sb).x + 12)
     rect(x + ICON - bw / 2 - 4, y - 7, x + ICON + bw / 2 - 4, y + 15, T.red, 11)
@@ -8591,86 +8621,213 @@ local function widgetWeather(x, y, w, h)
   if tap('w.weather', x, y, x + w, y + h) then openApp('weather') end
 end
 
-local function homePage1(ox)
-  local oldX = D.x
-  D.x = D.x + ox
-  local ww = ICON * 2 + GAPX
-  widgetFriends(24, 62, ww, 132)
-  widgetWeather(24 + ww + GAPX, 62, ww, 132)
-  local y0 = 212
-  local n = 0
-  for _, id in ipairs(GRID) do
-    local a = APP_BY_ID[id]
-    if not listHas(S.hiddenApps, id) then
-      n = n + 1
-      local c, r = (n - 1) % COLS, math.floor((n - 1) / COLS)
-      local x, y = 24 + c * (ICON + GAPX), y0 + r * 92 - r * 8 * (#GRID > 16 and 1 or 0)
-      appIconDraw(id, a.icon, a.name, x, y, a.c1, a.c2, a.badge and a.badge() or 0, function() openApp(id) end)
+-- ---- home layout: three pages, apps can be moved between them or removed (long-press)
+HOME.PAGES = 3
+function HOME.defaultLayout()
+  local p2 = { 'car', 'race', 'runs', 'power', 'bank', 'market', 'vault' }
+  local in2 = {}
+  for _, id in ipairs(p2) do in2[id] = true end
+  local p1 = {}
+  for _, id in ipairs(GRID) do if not in2[id] then p1[#p1 + 1] = id end end
+  return { p1, p2, {} }
+end
+function HOME.get()
+  if HOME.L then return HOME.L end
+  local L = XM.jget('homeLayout', nil)
+  if type(L) ~= 'table' or type(L[1]) ~= 'table' then L = HOME.defaultLayout() end
+  local seen = {}
+  for p = 1, HOME.PAGES do
+    L[p] = type(L[p]) == 'table' and L[p] or {}
+    for i = #L[p], 1, -1 do
+      local id = L[p][i]
+      if not APP_BY_ID[id] or seen[id] then table.remove(L[p], i) else seen[id] = true end
     end
   end
-  D.x = oldX
+  for _, id in ipairs(GRID) do   -- apps added by updates land at the end of page 1
+    if not seen[id] then L[1][#L[1] + 1] = id end
+  end
+  HOME.L = L
+  return L
+end
+function HOME.save() XM.jset('homeLayout', HOME.get()) end
+function HOME.visible(page, skip)
+  local out = {}
+  for _, id in ipairs(HOME.get()[page]) do
+    if id ~= skip and not listHas(S.hiddenApps, id) then out[#out + 1] = id end
+  end
+  return out
+end
+function HOME.remove(id)
+  if not listHas(S.hiddenApps, id) then S.hiddenApps = listToggle(S.hiddenApps, id) end
+end
+function HOME.restore(id, page)
+  local L = HOME.get()
+  for p = 1, HOME.PAGES do for i, v in ipairs(L[p]) do if v == id then table.remove(L[p], i) break end end end
+  L[page][#L[page] + 1] = id
+  if listHas(S.hiddenApps, id) then S.hiddenApps = listToggle(S.hiddenApps, id) end
+  HOME.save()
+end
+function HOME.moveTo(id, page, n)
+  local L = HOME.get()
+  for p = 1, HOME.PAGES do for i, v in ipairs(L[p]) do if v == id then table.remove(L[p], i) break end end end
+  local vis = HOME.visible(page)
+  local idx = #L[page] + 1
+  if vis[n] then for i, v in ipairs(L[page]) do if v == vis[n] then idx = i break end end end
+  table.insert(L[page], idx, id)
+  HOME.save()
+end
+-- grid geometry: page 1 sits under the widgets
+function HOME.slot(page, n)
+  local c, r = (n - 1) % COLS, math.floor((n - 1) / COLS)
+  if page == 1 then return 24 + c * (ICON + GAPX), 212 + r * 88 end
+  return 24 + c * (ICON + GAPX), HOME.top0 + r * 92
+end
+function HOME.nearest(page, mx, my, count)
+  local best, bd = 1, 1e9
+  for n = 1, count + 1 do
+    local x, y = HOME.slot(page, n)
+    local d = (x + ICON / 2 - mx) ^ 2 + (y + ICON / 2 - my) ^ 2
+    if d < bd then best, bd = n, d end
+  end
+  return best
 end
 
-local function homePage2(ox)
+function HOME.drawPage(page, ox)
   local oldX = D.x
   D.x = D.x + ox
   local top0 = 70
-  if MEDIA.now() then top0 = nowPlayingCard(58, 'hm') + 6 end
-  local pinned = splitList(S.pinnedApps)
-  local wins = {}
-  if ac.getAppWindows then for _, w in ipairs(ac.getAppWindows()) do wins[w.name] = w end end
-  local n = 0
-  for _, name in ipairs(pinned) do
-    local w = wins[name]
-    if w then
-      n = n + 1
-      local c, r = (n - 1) % COLS, math.floor((n - 1) / COLS)
-      local x, y = 24 + c * (ICON + GAPX), top0 + r * 100
-      local col = avatarColor(w.title)
-      local icon = appIcon(w.title) or utf8Trim(w.title, 1):upper()
-      appIconDraw('win.' .. name, icon, w.title, x, y, rgbm(col.r * 1.15, col.g * 1.15, col.b * 1.15, 1), col, 0,
-        function() toggleWindow(name) end, w.visible)
-    end
+  if page == 3 and MEDIA.now() then top0 = nowPlayingCard(58, 'hm') + 6 end
+  HOME.top0 = page == 1 and 212 or top0
+  if page == 1 then
+    local ww = ICON * 2 + GAPX
+    widgetFriends(24, 62, ww, 132)
+    widgetWeather(24 + ww + GAPX, 62, ww, 132)
   end
-  if n == 0 then
-    text('🧩', 40, SW / 2, 200, T.white, F.r, 0.5)
-    text('Your apps', 20, SW / 2, 260, T.white, F.sb, 0.5)
-    textBox('Open the Apps app and tap ☆ next to the apps you use. They show up here, one tap to open or close.', 14, 50, 292, SW - 50, 360, rgbm(1, 1, 1, 0.75))
-    if W.button('h2.lib', 'Open Apps', SW / 2 - 70, 370, 140, 40, 'filled') then openApp('library') end
+  local list = HOME.visible(page, HOME.drag and HOME.drag.id or nil)
+  local gap = nil
+  if HOME.drag and page == HOME.page then gap = HOME.nearest(page, HOME.drag.x, HOME.drag.y, #list) end
+  local n = 0
+  local function put(id)
+    n = n + 1
+    local a = APP_BY_ID[id]
+    local x, y = HOME.slot(page, n)
+    appIconDraw(id, a.icon, a.name, x, y, a.c1, a.c2, a.badge and a.badge() or 0, function() openApp(id) end, nil, { n = n, ox = ox })
+  end
+  for i = 1, #list + 1 do
+    if gap == i then n = n + 1 end
+    if list[i] then put(list[i]) end
+  end
+  -- game apps pinned from the Apps app live on the last page, after your apps
+  if page == HOME.PAGES then
+    local wins = {}
+    if ac.getAppWindows then for _, w in ipairs(ac.getAppWindows()) do wins[w.name] = w end end
+    local pinnedN = 0
+    for _, name in ipairs(splitList(S.pinnedApps)) do
+      local w = wins[name]
+      if w then
+        pinnedN = pinnedN + 1
+        n = n + 1
+        local x, y = HOME.slot(page, n)
+        local col = avatarColor(w.title)
+        local icon = appIcon(w.title) or utf8Trim(w.title, 1):upper()
+        appIconDraw('win.' .. name, icon, w.title, x, y, rgbm(col.r * 1.15, col.g * 1.15, col.b * 1.15, 1), col, 0,
+          function() toggleWindow(name) end, w.visible)
+      end
+    end
+    if n == 0 and not HOME.edit then
+      text('🧩', 40, SW / 2, 200, T.white, F.r, 0.5)
+      text('Your page', 20, SW / 2, 260, T.white, F.sb, 0.5)
+      textBox('Press and hold any app, then drag it here. Game apps you star in the Apps app show up here too.', 14, 50, 292, SW - 50, 360, rgbm(1, 1, 1, 0.75))
+      if W.button('h2.lib', 'Open Apps', SW / 2 - 70, 370, 140, 40, 'filled') then openApp('library') end
+    end
   end
   D.x = oldX
 end
 
 local function homeScreen()
   wallpaper()
+  HOME.hits = {}
+  local edit = HOME.edit
   -- page swipe
   local act = IN.active
-  local canDrag = act == nil or (type(act) == 'string' and (act:sub(1, 5) == 'icon.' or act:sub(1, 2) == 'w.'))
+  local canDrag = not HOME.drag and (act == nil or (type(act) == 'string' and (act:sub(1, 5) == 'icon.' or act:sub(1, 2) == 'w.')))
   if not IN.locked and IN.down and not HOME.dragging and canDrag and hit(0, 50, SW, SH - 120) then
     local dx = IN.m.x - IN.pressPos.x
-    if math.abs(dx) > 10 and math.abs(dx) > math.abs(IN.m.y - IN.pressPos.y) then HOME.dragging = true IN.active = '__page' end
+    if math.abs(dx) > 10 and math.abs(dx) > math.abs(IN.m.y - IN.pressPos.y) then HOME.dragging = true IN.active = '__page' HOME.holdId = nil end
   end
   if HOME.dragging and IN.clicked == false and IN.active == '__page' then
     local dx = IN.m.x - IN.pressPos.x
-    HOME.offset = clamp(-(HOME.page - 1) * SW + dx, -SW - 40, 40)
+    HOME.offset = clamp(-(HOME.page - 1) * SW + dx, -(HOME.PAGES - 1) * SW - 40, 40)
     if IN.released then
-      if dx < -60 then HOME.page = 2 elseif dx > 60 then HOME.page = 1 end
+      if dx < -60 then HOME.page = math.min(HOME.PAGES, HOME.page + 1) elseif dx > 60 then HOME.page = math.max(1, HOME.page - 1) end
       HOME.dragging = false
     end
   else
     HOME.offset = damp(HOME.offset, -(HOME.page - 1) * SW, 14, IN.dt)
   end
   pushClip(0, 0, SW, SH)
-  homePage1(HOME.offset)
-  homePage2(HOME.offset + SW)
+  for p = 1, HOME.PAGES do
+    if math.abs(HOME.offset + (p - 1) * SW) < SW + 20 then HOME.drawPage(p, HOME.offset + (p - 1) * SW) end
+  end
+  -- dragging an icon: it follows the finger, and pushing against an edge turns the page
+  local mx, my = IN.m.x - D.x, IN.m.y - D.y
+  if edit and not HOME.drag and IN.clicked and IN.active == nil then
+    for _, h in ipairs(HOME.hits) do
+      if mx >= h.x - 4 and mx <= h.x + ICON + 4 and my >= h.y - 4 and my <= h.y + ICON + 20 then
+        HOME.drag = { id = h.id, x = mx, y = my }
+        IN.active = '__drag'
+        break
+      end
+    end
+  end
+  if HOME.drag then
+    local d = HOME.drag
+    if IN.down then
+      d.x, d.y = mx, my
+      if (mx < 18 and HOME.page > 1 or mx > SW - 18 and HOME.page < HOME.PAGES) and clock() > (HOME.flipAt or 0) then
+        HOME.page = HOME.page + (mx < 18 and -1 or 1)
+        HOME.flipAt = clock() + 0.8
+      end
+      local a = APP_BY_ID[d.id]
+      appIconDraw(d.id, a.icon, nil, d.x - ICON / 2, d.y - ICON / 2 - 8, a.c1, a.c2, 0, nil, nil, 'drag')
+    else
+      local list = HOME.visible(HOME.page, d.id)
+      HOME.moveTo(d.id, HOME.page, HOME.nearest(HOME.page, d.x, d.y, #list))
+      HOME.drag = nil
+    end
+  end
   popClip()
+  -- edit mode chrome: Done button and a tray with removed apps
+  if edit then
+    local dx1, dy1 = SW - 82, 52
+    rect(dx1, dy1, dx1 + 68, dy1 + 28, rgbm(1, 1, 1, 0.22), 14)
+    text('Done', 14, dx1 + 34, dy1 + 5, T.white, F.sb, 0.5)
+    if tap('home.done', dx1, dy1, dx1 + 68, dy1 + 28) then HOME.edit = false HOME.drag = nil end
+    local gone = {}
+    for _, id in ipairs(GRID) do if listHas(S.hiddenApps, id) then gone[#gone + 1] = id end end
+    if #gone > 0 and not HOME.drag then
+      local ty = SH - 214
+      rect(14, ty, SW - 14, ty + 62, rgbm(0, 0, 0, 0.35), 18)
+      text('REMOVED  ·  tap to add back', 10, 26, ty + 5, rgbm(1, 1, 1, 0.7), F.b)
+      for i = 1, math.min(#gone, 6) do
+        local a = APP_BY_ID[gone[i]]
+        local ix = 26 + (i - 1) * 50
+        if tap('add.' .. gone[i], ix, ty + 20, ix + 40, ty + 60) then HOME.restore(gone[i], HOME.page) end
+        rect(ix, ty + 20, ix + 40, ty + 58, a.c2, 11)
+        local g = leadingIcon(a.icon)
+        if g then glyph(g, ix + 9, ty + 27, 22, T.white) end
+      end
+    end
+  end
   -- page dots
   local dy = SH - 140
-  rect(SW / 2 - 26, dy - 8, SW / 2 + 26, dy + 8, rgbm(0, 0, 0, 0.2), 8)
-  for i = 1, 2 do
+  local dw = (HOME.PAGES - 1) * 9 + 14
+  rect(SW / 2 - dw - 4, dy - 8, SW / 2 + dw + 4, dy + 8, rgbm(0, 0, 0, 0.2), 8)
+  for i = 1, HOME.PAGES do
     local sel = HOME.page == i
-    circle(SW / 2 - 9 + (i - 1) * 18, dy, 3.5, rgbm(1, 1, 1, sel and 1 or 0.4))
-    if tap('dot' .. i, SW / 2 - 18 + (i - 1) * 18, dy - 10, SW / 2 + (i - 1) * 18, dy + 10) then HOME.page = i end
+    local cx = SW / 2 + (i - (HOME.PAGES + 1) / 2) * 18
+    circle(cx, dy, 3.5, rgbm(1, 1, 1, sel and 1 or 0.4))
+    if tap('dot' .. i, cx - 9, dy - 10, cx + 9, dy + 10) then HOME.page = i end
   end
   -- dock
   local dockY = SH - 112
