@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '0.5'
-local BUILD = 5
+local VERSION = '0.6'
+local BUILD = 6
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -2239,7 +2239,7 @@ function WALL.import()
 end
 end
 
-local APPMOD = { Messages = {}, Friends = {}, Camera = {}, Walk = {}, Video = {}, Chase = {}, Plates = {}, Skins = {}, Weather = {}, Library = {}, Settings = {}, Maps = {}, Hud = {}, Livery = {}, Themes = {}, CutUp = {}, Music = {} }
+local APPMOD = { Messages = {}, Friends = {}, Camera = {}, Walk = {}, Video = {}, Chase = {}, Plates = {}, Skins = {}, Weather = {}, Library = {}, Settings = {}, Maps = {}, Hud = {}, Livery = {}, Themes = {}, CutUp = {}, Music = {}, Leaders = {} }
 
 -- ===========================================================================
 -- Shared pieces for app screens
@@ -4172,7 +4172,7 @@ function APPMOD.Music.root()
     y = y + cs + 26
     if m then
       textFit(m.title, 22, 36, y, SW - 72, T.white, F.b)
-      textFit((m.artist ~= '' and m.artist or 'Unknown artist') .. (m.album ~= '' and (' · ' .. m.album) or ''), 15, 36, y + 32, SW - 72, T.label2, F.m)
+      textFit(((m.artist or '') ~= '' and m.artist or 'Unknown artist') .. ((m.album or '') ~= '' and (' · ' .. m.album) or ''), 15, 36, y + 32, SW - 72, T.label2, F.m)
       y = y + 70
       local dur, pos = m.trackDuration or -1, m.trackPosition or -1
       local t = (dur > 0 and pos >= 0) and clamp(pos / dur, 0, 1) or 0
@@ -4359,6 +4359,7 @@ end
 -- CUT-UP (points + leaderboard)
 -- ===========================================================================
 
+local LV_TAB = 2
 local function boardRows(kind)
   local rows = {}
   local myName = ac.getDriverName(0) or 'You'
@@ -4487,6 +4488,128 @@ function APPMOD.CutUp.root()
   end
   return scr
 end
+
+-- ===========================================================================
+-- LEADERBOARDS (server standings, lap times, Cut-Up, drift)
+-- ===========================================================================
+
+local SESSION_NAMES = { [0] = 'Session', 'Practice', 'Qualifying', 'Race', 'Hotlap', 'Time Attack', 'Drift', 'Drag' }
+
+local function standings()
+  local rows, sim = {}, ac.getSim()
+  for i = 0, sim.carsCount - 1 do
+    local lbf = type(ac.getCar) == 'table' and ac.getCar.leaderboard or nil
+    local c = lbf and lbf(i) or ac.getCar(i)
+    if c and (c.index == 0 or c.isConnected) and c.isActive ~= false then
+      rows[#rows + 1] = {
+        index = c.index, name = ac.getDriverName(c.index) or ('Car ' .. c.index), car = ac.getCarName(c.index) or '',
+        best = c.bestLapTimeMs or 0, last = c.previousLapTimeMs or 0, laps = c.lapCount or 0,
+        pos = c.racePosition or (#rows + 1), pit = c.isInPitlane, drift = c.driftPoints or 0, me = c.index == 0,
+      }
+    end
+  end
+  return rows
+end
+
+local function lbRow(r, rank, y, right, sub, rightColor)
+  local h = 58
+  if r.me then rect(LIST.x, y, LIST.x + LIST.w, y + h, A(accent(), 0.14), 14) end
+  local rc = rank == 1 and rgbm(1, 0.82, 0.25, 1) or (rank == 2 and rgbm(0.80, 0.82, 0.86, 1) or (rank == 3 and rgbm(0.85, 0.55, 0.30, 1) or T.label2))
+  text(tostring(rank), 18, LIST.x + 22, y + 17, rc, F.numb, 0.5)
+  avatar(r.name, LIST.x + 42, y + 11, 36)
+  textFit(r.name .. (r.me and '  (you)' or ''), 15, LIST.x + 88, y + 10, LIST.w - 190, T.label, F.sb)
+  textFit(sub, 12, LIST.x + 88, y + 32, LIST.w - 190, T.label2)
+  text(right, 16, LIST.x + LIST.w - 14, y + 18, rightColor or T.white, F.numb, 1)
+  return y + h
+end
+
+function APPMOD.Leaders.root()
+  local scr = { title = 'Leaderboards' }
+  local tab = 1
+  function scr.draw()
+    bgFill()
+    local sim = ac.getSim()
+    local s = scrollBegin('leaders', 50, BOTTOM)
+    local y = largeTitle('Leaderboards', 96, s.y)
+    -- session header
+    local stype = SESSION_NAMES[sim.raceSessionType or 0] or 'Session'
+    local left = sim.sessionTimeLeft and sim.sessionTimeLeft > 0 and sim.sessionTimeLeft or nil
+    textFit((sim.isOnlineRace and ((ac.getServerName and ac.getServerName()) or 'Server') or 'Offline') .. ' · ' .. stype, 13, 16, y - 12, SW - 120, T.label2, F.m)
+    if left then text(string.format('%d:%02d left', math.floor(left / 60000), math.floor(left / 1000) % 60), 13, SW - 16, y - 12, accent(), F.num, 1) end
+    y = y + 14
+    tab = W.segmented('lb.tab', { 'Standings', 'Laps', 'Cut-Up', 'Drift' }, tab, 16, y, SW - 32)
+    y = y + 50
+    local rows = standings()
+    local list = {}
+    if tab == 1 then
+      for _, r in ipairs(rows) do list[#list + 1] = r end
+      -- podium
+      if #list >= 1 then
+        local pw = (SW - 32 - 16) / 3
+        local order = { 2, 1, 3 }
+        local heights = { [1] = 96, [2] = 78, [3] = 64 }
+        for k, rank in ipairs(order) do
+          local r = list[rank]
+          if r then
+            local x = 16 + (k - 1) * (pw + 8)
+            local h = heights[rank]
+            local top = y + 96 - h
+            avatar(r.name, x + pw / 2 - 22, top - 52, 44)
+            textFit(r.name, 12, x + pw / 2, top - 4 - 2, pw - 6, T.label, F.sb, 0.5)
+            local col = rank == 1 and rgbm(1, 0.82, 0.25, 1) or (rank == 2 and rgbm(0.80, 0.82, 0.86, 1) or rgbm(0.85, 0.55, 0.30, 1))
+            rect(x, top + 14, x + pw, y + 96 + 14, mix(T.cell, col, 0.22), 12, ui.CornerFlags.Top)
+            rect(x, top + 14, x + pw, top + 17, col, 2)
+            text(tostring(rank), 26, x + pw / 2, top + 22, col, F.numb, 0.5)
+            text(r.best > 0 and fmtLap(r.best) or (r.laps .. ' laps'), 11, x + pw / 2, top + 56, T.label2, F.num, 0.5)
+          end
+        end
+        y = y + 126
+      end
+      local leaderBest = list[1] and list[1].best or 0
+      rect(LIST.x, y, LIST.x + LIST.w, y + math.max(1, #list) * 58, T.cell, 14)
+      for i, r in ipairs(list) do
+        local right, rc
+        if sim.raceSessionType == 3 then -- race
+          right = r.laps .. ' L'
+        elseif i == 1 or r.best <= 0 or leaderBest <= 0 then
+          right = fmtLap(r.best)
+        else
+          right = string.format('+%.3f', (r.best - leaderBest) / 1000)
+          rc = T.label2
+        end
+        y = lbRow(r, i, y, right, (r.pit and 'In pits · ' or '') .. r.car, rc)
+      end
+    elseif tab == 2 then
+      for _, r in ipairs(rows) do if r.best > 0 then list[#list + 1] = r end end
+      table.sort(list, function(a, b) return a.best < b.best end)
+      if #list == 0 then text('No lap times set yet', 14, SW / 2, y + 20, T.label2, F.r, 0.5) y = y + 60 end
+      rect(LIST.x, y, LIST.x + LIST.w, y + math.max(1, #list) * 58, T.cell, 14)
+      for i, r in ipairs(list) do
+        y = lbRow(r, i, y, fmtLap(r.best), 'Last ' .. fmtLap(r.last) .. ' · ' .. r.laps .. ' laps', i == 1 and rgbm(0.75, 0.45, 1, 1) or nil)
+      end
+    elseif tab == 3 then
+      local bt = W.segmented('lb.cu', { 'Live', 'Session', 'All-time' }, LV_TAB or 2, 16, y, SW - 32)
+      LV_TAB = bt
+      y = y + 48
+      local cr = boardRows(bt)
+      rect(LIST.x, y, LIST.x + LIST.w, y + math.max(1, #cr) * 58, T.cell, 14)
+      for i, r in ipairs(cr) do
+        y = lbRow(r, i, y, HESI.fmt(r.score), bt == 1 and (r.running and string.format('Running · x%.1f', r.mult or 1) or 'Idle') or (bt == 2 and ('Banked ' .. HESI.fmt(r.total or 0)) or 'Personal best'))
+      end
+    else
+      for _, r in ipairs(rows) do if r.drift > 0 then list[#list + 1] = r end end
+      table.sort(list, function(a, b) return a.drift > b.drift end)
+      if #list == 0 then text('No drift points yet', 14, SW / 2, y + 20, T.label2, F.r, 0.5) y = y + 60 end
+      rect(LIST.x, y, LIST.x + LIST.w, y + math.max(1, #list) * 58, T.cell, 14)
+      for i, r in ipairs(list) do y = lbRow(r, i, y, HESI.fmt(r.drift), r.car) end
+    end
+    y = W.sectionFooter('Standings and laps come from the server for every driver. Cut-Up scores come from drivers running AC Phone.', y + 6)
+    scrollEnd(s, y + 20)
+    navBar('Leaderboards', { large = true }, s.y)
+  end
+  return scr
+end
+
 end
 -- ===========================================================================
 -- App registry
@@ -4506,6 +4629,7 @@ local APPS = {
   { id = 'livery',   name = 'Livery',   icon = '@PALETTE', c1 = rgbm(1.00, 0.55, 0.30, 1), c2 = rgbm(0.85, 0.20, 0.50, 1), root = APPMOD.Livery.root },
   { id = 'cutup',    name = 'Cut-Up',   icon = '@BURN', c1 = rgbm(1.00, 0.55, 0.10, 1), c2 = rgbm(0.85, 0.10, 0.05, 1), root = APPMOD.CutUp.root },
   { id = 'themes',   name = 'Personalize',   icon = '@SLIDERS', c1 = rgbm(0.95, 0.45, 0.95, 1), c2 = rgbm(0.40, 0.20, 0.85, 1), root = APPMOD.Themes.root },
+  { id = 'leaders',  name = 'Leaderboards', icon = '@LEADERBOARD', c1 = rgbm(1.00, 0.80, 0.30, 1), c2 = rgbm(0.90, 0.50, 0.05, 1), root = APPMOD.Leaders.root },
   { id = 'music',    name = 'Music',    icon = '@MUSIC', c1 = rgbm(1.00, 0.36, 0.45, 1), c2 = rgbm(0.86, 0.10, 0.30, 1), root = APPMOD.Music.root },
   { id = 'weather',  name = 'Weather',  icon = '@WEATHER_FEW_CLOUDS', c1 = rgbm(0.45, 0.75, 1.00, 1), c2 = rgbm(0.15, 0.45, 0.90, 1), root = APPMOD.Weather.root },
   { id = 'library',  name = 'Apps',     icon = '@APPS', c1 = rgbm(0.45, 0.50, 1.00, 1), c2 = rgbm(0.25, 0.25, 0.80, 1), root = APPMOD.Library.root },
@@ -4515,7 +4639,7 @@ local APP_BY_ID = {}
 APPMOD.APPS = APPS
 for _, a in ipairs(APPS) do APP_BY_ID[a.id] = a end
 local DOCK = { 'messages', 'music', 'camera', 'settings' }
-local GRID = { 'cutup', 'maps', 'friends', 'walk', 'video', 'chase', 'livery', 'skins', 'plates', 'hud', 'weather', 'themes', 'library' }
+local GRID = { 'cutup', 'leaders', 'maps', 'friends', 'walk', 'video', 'chase', 'livery', 'skins', 'plates', 'hud', 'weather', 'themes', 'library' }
 
 local appIconRects = {}   -- id -> {x, y, size} for open/close zoom
 

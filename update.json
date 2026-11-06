@@ -1,12 +1,12 @@
 {
-  "version": "0.5",
-  "build": 5,
-  "notes": "Sleek redesign with real icons and new fonts. Personalize: themes, photo wallpapers, fonts, icon styles. Music controls. Better Skins, Livery presets and share codes, Cut-Up tiers and run summary.",
+  "version": "0.6",
+  "build": 6,
+  "notes": "New Leaderboards app: server standings with podium, lap times, Cut-Up boards and drift points. Fixed a Music app crash.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 239081
+      "size": 245406
     },
     {
       "path": "manifest.ini",
@@ -16,7 +16,7 @@
     {
       "path": "README.md",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/README.md",
-      "size": 6028
+      "size": 6314
     },
     {
       "path": "icon.png",
