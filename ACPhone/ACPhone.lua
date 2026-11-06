@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.3.0'
-local BUILD = 25
+local VERSION = '1.3.1'
+local BUILD = 26
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -7676,7 +7676,25 @@ local function safe(fn, ...) local ok, r = pcall(fn, ...) if ok then return r en
 -- ---- actions
 function C.headlights() local c = car0() if c and ac.setHeadlights then ac.setHeadlights(not c.headlightsActive) end end
 function C.highBeams() local c = car0() if c and ac.setHighBeams then ac.setHighBeams(not c.highBeams) end end
-function C.flash() if ac.flashLights then ac.flashLights() end end
+-- flashing is done here (not with ac.flashLights, which can latch): tap once to start blinking, tap again to stop
+function C.flash()
+  local c = car0()
+  if not c then return end
+  if C.flashing then
+    C.flashing = false
+    if ac.setHighBeams then ac.setHighBeams(C.prevHigh and true or false) end
+    if ac.setHeadlights then ac.setHeadlights(C.prevHead and true or false) end
+  else
+    C.prevHead, C.prevHigh = c.headlightsActive, c.highBeams
+    C.flashing, C.flashT0 = true, clock()
+  end
+end
+function C.flashStep()
+  if not C.flashing then return end
+  local on = math.floor((clock() - C.flashT0) * 6) % 2 == 0
+  if ac.setHeadlights then ac.setHeadlights(on) end
+  if ac.setHighBeams then ac.setHighBeams(on) end
+end
 function C.daytime() local c = car0() if c and ac.setDaytimeLights then ac.setDaytimeLights(not c.daytimeRunningLights) end end
 function C.hazards() local c = car0() if c and ac.setTurningLights then ac.setTurningLights(c.hazardLights and 0 or 3) end end
 function C.driverDoor() local c = car0() if c and ac.setDriverDoorOpen then ac.setDriverDoorOpen(0, not c.isDriverDoorOpen, false) end end
@@ -7768,6 +7786,7 @@ function C.step(dt)
 end
 
 function C.update(dt)
+  pcall(C.flashStep)
   local ok, err = pcall(C.step, dt)
   if ok then C.stepErr = nil elseif C.stepErr ~= tostring(err) then C.stepErr = tostring(err) ac.log('HackaPhone car lights: ' .. C.stepErr) end
 end
@@ -7816,17 +7835,14 @@ function APPMOD.Car.root()
       { 'hl', 'Headlights', c and c.headlightsActive and 'On' or 'Off', c and c.headlightsActive, '●', C.headlights },
       { 'hb', 'High beams', c and c.highBeams and 'On' or 'Off', c and c.highBeams, '◉', C.highBeams },
       { 'hz', 'Hazards', c and c.hazardLights and 'Flashing' or 'Off', c and c.hazardLights, '▲', C.hazards },
-      { 'fl', 'Flash', 'Hold to flash', false, '⚡', nil },
+      { 'fl', 'Flash', C.flashing and 'Flashing, tap to stop' or 'Tap to start', C.flashing, '⚡', C.flash },
       { 'dl', 'Daytime lights', c and c.daytimeRunningLights and 'On' or 'Off', c and c.daytimeRunningLights, '☀', C.daytime },
       { 'dd', 'Driver door', c and c.isDriverDoorOpen and 'Open' or 'Closed', c and c.isDriverDoorOpen, '▯', C.driverDoor },
     }
     for i, t in ipairs(tiles) do
       local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
-      local fired, held = bigTile('car.' .. t[1], 16 + col * (gw + 10), y + row * (gh + 10), gw, gh, t[2], t[3], (t[4] or (t[1] == 'fl' and C.flashHeld)) and true or false, t[5])
-      if t[1] == 'fl' then
-        C.flashHeld = held and true or false
-        if held then C.flash() end        -- flashes only while your finger is down
-      elseif fired then t[6]() end
+      local fired = bigTile('car.' .. t[1], 16 + col * (gw + 10), y + row * (gh + 10), gw, gh, t[2], t[3], t[4] and true or false, t[5])
+      if fired then t[6]() end
     end
     y = y + 3 * (gh + 10) + 6
 
