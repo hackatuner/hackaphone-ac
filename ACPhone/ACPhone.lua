@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.1.4'
-local BUILD = 17
+local VERSION = '1.1.6'
+local BUILD = 19
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -189,6 +189,19 @@ local FONT_FAMILIES = {
   { name = 'Modern', family = 'Segoe UI Variable Display' },
   { name = 'Classic', family = 'Segoe UI' },
   { name = 'Sport', family = 'Bahnschrift' },
+  { name = 'Clean', family = 'Calibri' },
+  { name = 'Soft', family = 'Candara' },
+  { name = 'Friendly', family = 'Trebuchet MS' },
+  { name = 'Techno', family = 'Corbel' },
+  { name = 'Wide', family = 'Verdana' },
+  { name = 'Retro', family = 'Franklin Gothic Medium' },
+  { name = 'Elegant', family = 'Georgia' },
+  { name = 'Luxe', family = 'Palatino Linotype' },
+  { name = 'Mono', family = 'Consolas' },
+  { name = 'Rounded', family = 'Segoe UI Semibold' },
+  { name = 'Impact', family = 'Impact' },
+  { name = 'Handwritten', family = 'Segoe Print' },
+  samples = {},
 }
 
 local function makeFont(weight, key, family)
@@ -5912,10 +5925,25 @@ function APPMOD.Themes.root()
 
     -- type & icons
     y = W.sectionHeader('Font', y + 4)
-    local fl = {}
-    for i, f in ipairs(FONT_FAMILIES) do fl[i] = f.name end
-    local nf = W.segmented('pf.font', fl, S.font or 1, 16, y, SW - 32)
-    if nf ~= S.font then S.font = nf buildFonts() end
+    -- font gallery: every chip previews its own typeface
+    do
+      local cw, ch = (SW - 32 - 10) / 2, 54
+      for i, f in ipairs(FONT_FAMILIES) do
+        local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
+        local x, fy = 16 + col * (cw + 10), y + row * (ch + 8)
+        local sel = (S.font or 1) == i
+        local fired = tap('pf.font' .. i, x, fy, x + cw, fy + ch)
+        rect(x, fy, x + cw, fy + ch, sel and A(accent(), 0.20) or T.cell, 14)
+        if sel then rectLine(x, fy, x + cw, fy + ch, accent(), 14, 1.5) end
+        local sf = FONT_FAMILIES.samples[i]
+        if not sf then sf = makeFont(ui.DWriteFont.Weight.SemiBold, 'fs' .. i, f.family) FONT_FAMILIES.samples[i] = sf end
+        text('Aa', 24, x + 16, fy + 10, sel and accent() or T.white, sf)
+        text(f.name, 13, x + 62, fy + 12, T.label, sf)
+        text('Race 0123', 10, x + 62, fy + 31, T.label2, sf)
+        if fired and not sel then S.font = i buildFonts() end
+      end
+      y = y + math.ceil(#FONT_FAMILIES / 2) * (ch + 8) - 8
+    end
     y = y + 44
     y = W.sectionHeader('App icons', y + 8)
     S.iconStyle = W.segmented('pf.icons', { 'Colour', 'Glass', 'Minimal' }, S.iconStyle or 1, 16, y, SW - 32)
@@ -6238,48 +6266,18 @@ function APPMOD.Leaders.root()
     textFit((sim.isOnlineRace and ((ac.getServerName and ac.getServerName()) or 'Server') or 'Offline') .. ' · ' .. stype, 13, 16, y - 12, SW - 120, T.label2, F.m)
     if left then text(string.format('%d:%02d left', math.floor(left / 60000), math.floor(left / 1000) % 60), 13, SW - 16, y - 12, accent(), F.num, 1) end
     y = y + 14
-    tab = W.segmented('lb.tab', { 'Standings', 'Laps', 'Cut-Up', 'Drift' }, tab, 16, y, SW - 32)
+    tab = W.segmented('lb.tab', { 'Standings', 'Laps', 'Drift' }, tab, 16, y, SW - 32)
     y = y + 50
     local rows = standings()
     local list = {}
     if tab == 1 then
-      for _, r in ipairs(rows) do list[#list + 1] = r end
-      -- podium
-      if #list >= 1 then
-        local pw = (SW - 32 - 16) / 3
-        local order = { 2, 1, 3 }
-        local heights = { [1] = 96, [2] = 78, [3] = 64 }
-        for k, rank in ipairs(order) do
-          local r = list[rank]
-          if r then
-            local x = 16 + (k - 1) * (pw + 8)
-            local h = heights[rank]
-            local top = y + 96 - h
-            avatar(r.name, x + pw / 2 - 22, top - 52, 44)
-            textFit(r.name, 12, x + pw / 2, top - 4 - 2, pw - 6, T.label, F.sb, 0.5)
-            local col = rank == 1 and rgbm(1, 0.82, 0.25, 1) or (rank == 2 and rgbm(0.80, 0.82, 0.86, 1) or rgbm(0.85, 0.55, 0.30, 1))
-            rect(x, top + 14, x + pw, y + 96 + 14, mix(T.cell, col, 0.22), 12, ui.CornerFlags.Top)
-            rect(x, top + 14, x + pw, top + 17, col, 2)
-            text(tostring(rank), 26, x + pw / 2, top + 22, col, F.numb, 0.5)
-            text(r.best > 0 and fmtLap(r.best) or (r.laps .. ' laps'), 11, x + pw / 2, top + 56, T.label2, F.num, 0.5)
-          end
-        end
-        y = y + 126
-      end
-      local leaderBest = list[1] and list[1].best or 0
-      rect(LIST.x, y, LIST.x + LIST.w, y + math.max(1, #list) * 58, T.cell, 14)
-      for i, r in ipairs(list) do
-        local right, rc
-        if sim.raceSessionType == 3 then -- race
-          right = r.laps .. ' L'
-        elseif i == 1 or r.best <= 0 or leaderBest <= 0 then
-          right = fmtLap(r.best)
-        else
-          right = string.format('+%.3f', (r.best - leaderBest) / 1000)
-          rc = T.label2
-        end
-        y = lbRow(r, i, y, right, (r.pit and 'In pits · ' or '') .. r.car, rc)
-      end
+      -- standings are ranked by Cut-Up points
+      local bt = W.segmented('lb.cu', { 'Live', 'Session', 'All-time' }, LV_TAB or 2, 16, y, SW - 32)
+      LV_TAB = bt
+      y = y + 48
+      local cr = boardRows(bt)
+      y = HESI.ui.podium(cr, y, bt)
+      y = HESI.ui.list(cr, y, bt, 4)
     elseif tab == 2 then
       for _, r in ipairs(rows) do if r.best > 0 then list[#list + 1] = r end end
       table.sort(list, function(a, b) return a.best < b.best end)
@@ -6288,13 +6286,6 @@ function APPMOD.Leaders.root()
       for i, r in ipairs(list) do
         y = lbRow(r, i, y, fmtLap(r.best), 'Last ' .. fmtLap(r.last) .. ' · ' .. r.laps .. ' laps', i == 1 and rgbm(0.75, 0.45, 1, 1) or nil)
       end
-    elseif tab == 3 then
-      local bt = W.segmented('lb.cu', { 'Live', 'Session', 'All-time' }, LV_TAB or 2, 16, y, SW - 32)
-      LV_TAB = bt
-      y = y + 48
-      local cr = boardRows(bt)
-      y = HESI.ui.podium(cr, y, bt)
-      y = HESI.ui.list(cr, y, bt, 4)
     else
       for _, r in ipairs(rows) do if r.drift > 0 then list[#list + 1] = r end end
       table.sort(list, function(a, b) return a.drift > b.drift end)
@@ -6302,7 +6293,7 @@ function APPMOD.Leaders.root()
       rect(LIST.x, y, LIST.x + LIST.w, y + math.max(1, #list) * 58, T.cell, 14)
       for i, r in ipairs(list) do y = lbRow(r, i, y, HESI.fmt(r.drift), r.car) end
     end
-    y = W.sectionFooter('Standings and laps come from the server for every driver. Cut-Up scores come from drivers running HackaPhone.', y + 6)
+    y = W.sectionFooter('Standings are Cut-Up points from drivers running HackaPhone. Lap times and drift come from the server.', y + 6)
     scrollEnd(s, y + 20)
     navBar('Leaderboards', { large = true }, s.y)
   end
@@ -7794,9 +7785,28 @@ local function cornerMasks()
   end
 end
 
+-- the live lap only exists once the car has moved; the clock counts from that moment
+-- (and from the line on every new lap), so a car sitting in the pits shows nothing
+function PHONE.lapTrack()
+  local car = ac.getCar(0)
+  if not car then return end
+  local lt, laps = car.lapTimeMs or 0, car.lapCount or 0
+  if PHONE.lapMoved and (laps ~= PHONE.lapSeen or lt + 1500 < (PHONE.lapPrev or 0)) then
+    PHONE.lapMoved = false
+    PHONE.lapOff = 0
+    if laps ~= PHONE.lapSeen and car.speedKmh > 3 then PHONE.lapMoved = true end   -- new lap, still rolling
+  end
+  if not PHONE.lapMoved and car.speedKmh > 3 then
+    PHONE.lapMoved, PHONE.lapOff = true, (laps ~= PHONE.lapSeen and 0 or lt)
+  end
+  PHONE.lapSeen, PHONE.lapPrev = laps, lt
+end
+function PHONE.lapMs(car) return math.max(0, (car.lapTimeMs or 0) - (PHONE.lapOff or 0)) end
+
 local function lapActive()
   local car = ac.getCar(0)
-  return S.liveActivity and car and (car.speedKmh > 3 or (car.lapTimeMs or 0) > 0) and not ac.getSim().isPaused
+  PHONE.lapTrack()
+  return S.liveActivity and car and PHONE.lapMoved and not ac.getSim().isPaused
 end
 
 -- returns left text, right text, colour, kind
@@ -7814,7 +7824,7 @@ local function islandInfo()
     local car = ac.getCar(0)
     local d = car.performanceMeter or 0
     local hasBest = LIVE.bestMs > 0
-    return '⏱ ' .. fmtLapShort(car.lapTimeMs), hasBest and string.format('%+.2f', d) or (math.floor(car.speedKmh) .. ' km/h'),
+    return '⏱ ' .. fmtLapShort(PHONE.lapMs(car)), hasBest and string.format('%+.2f', d) or (math.floor(car.speedKmh) .. ' km/h'),
       hasBest and (d <= 0 and T.green or T.red) or T.white, 'lap'
   end
   if CAM.mode == 'chase' then return '🏎️', 'Chase', rgbm(0.7, 0.5, 1, 1), 'cam' end
@@ -7835,7 +7845,7 @@ local function islandExpanded(kind)
     if kind == 'lap' then
       local car = ac.getCar(0)
       text('LAP ' .. ((car.lapCount or 0) + 1), 12, x1 + 22, y1 + 46, T.label2, F.sb)
-      text(fmtLap(car.lapTimeMs), 26, x1 + 22, y1 + 62, T.white, F.numb)
+      text(fmtLap(PHONE.lapMs(car)), 26, x1 + 22, y1 + 62, T.white, F.numb)
       text('Last ' .. fmtLap(car.previousLapTimeMs) .. '   Best ' .. fmtLap(LIVE.bestMs), 12, x1 + 22, y1 + 96, T.label2)
       text(math.floor(car.speedKmh) .. '', 30, x2 - 22, y1 + 50, T.white, F.b, 1)
       text('km/h · ' .. (car.gear == 0 and 'N' or (car.gear < 0 and 'R' or tostring(car.gear))) .. (car.racePosition and car.racePosition > 0 and ('  ·  P' .. car.racePosition) or ''), 12, x2 - 22, y1 + 90, T.label2, F.r, 1)
@@ -7938,7 +7948,7 @@ local function lapCard(y)
   local car = ac.getCar(0)
   rect(12, y, SW - 12, y + 84, rgbm(0.18, 0.18, 0.2, 0.88), 20)
   text('⏱  LIVE LAP ' .. ((car.lapCount or 0) + 1), 12, 28, y + 12, T.label2, F.sb)
-  text(fmtLap(car.lapTimeMs), 28, 28, y + 30, T.white, F.numb)
+  text(fmtLap(PHONE.lapMs(car)), 28, 28, y + 30, T.white, F.numb)
   text(math.floor(car.speedKmh) .. ' km/h', 15, SW - 28, y + 38, T.white, F.m, 1)
   if LIVE.bestMs > 0 then
     local d = car.performanceMeter or 0
@@ -8784,6 +8794,7 @@ function script.update(dt)
   PL.update()
   liveUpdate()
   UPD.tick()
+  PHONE.lapTrack()
   HESI.update(dt)
   XM.tick(dt)
   XM.race.update(dt)

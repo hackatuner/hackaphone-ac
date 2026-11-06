@@ -1,12 +1,12 @@
 {
-  "version": "1.1.4",
-  "build": 17,
-  "notes": "1.1.4: removed the small black corner nubs sticking out of the phone body; cleaner, evenly rounded shape.",
+  "version": "1.1.6",
+  "build": 19,
+  "notes": "1.1.6: live lap only appears once the car moves and times from then. Standings rank by Cut-Up points. 15 fonts in Appearance.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 392704
+      "size": 393260
     },
     {
       "path": "manifest.ini",
