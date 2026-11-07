@@ -1,12 +1,12 @@
 {
-  "version": "1.5.0",
-  "build": 40,
-  "notes": "Market update.",
+  "version": "1.5.1",
+  "build": 41,
+  "notes": "Fixed race winnings not paying out.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 446412
+      "size": 446978
     },
     {
       "path": "manifest.ini",

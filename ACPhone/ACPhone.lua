@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.5.0'
-local BUILD = 40
+local VERSION = '1.5.1'
+local BUILD = 41
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -1904,6 +1904,18 @@ local function refund()
   if c then c.escrow = false end
 end
 
+-- never throw away a finished race that hasn't been paid yet: settle it (or give the wager back) before anything resets it
+local function resolveNow() if R.resolveFn then R.resolveFn() end end
+function R.settle()
+  local c = R.cur
+  if not c or c.outcome or R.state ~= 'finished' then return end
+  if c.my and c.opp and c.opp.fin then resolveNow()
+  elseif c.my then
+    -- their result never arrived: don't leave the wager stuck
+    if c.my.dnf then resolveNow() else refund() end
+  end
+end
+
 local function openUI() if R.openUI then R.openUI() end end
 
 local function newRun(spec, mode)
@@ -1962,6 +1974,7 @@ local function resolve(forfeitWin)
   elseif o.win == false then notify('You lost the race', c.oppName .. (c.wager > 0 and (' · -' .. XM.money(c.wager)) or ''), '🏁', openUI, { force = true }) end
 end
 
+R.resolveFn = function() resolve() end
 local onEvent
 raceSend = ac.OnlineEvent({
   ac.StructItem.key('acphone.race.v1'),
@@ -1977,7 +1990,7 @@ onEvent = function(sender, d)
   local c = R.cur
   if d.kind == 1 then                                         -- invite
     if c and c.rid == d.rid and c.oppSid == sid then return end   -- the same invite sent again
-    if R.state == 'finished' or (R.state == 'idle' and R.run and not R.busy()) then reset() end   -- stale result or armed solo pull
+    if R.state == 'finished' or (R.state == 'idle' and R.run and not R.busy()) then R.settle() reset() end   -- stale result or armed solo pull
     if R.state ~= 'idle' or R.busy() then send(3, sid, { rid = d.rid, flags = 1 }) return end
     local spec = { kind = d.rtype, x = d.x, y = d.y }
     R.cur = { rid = d.rid, role = 'guest', oppSid = sid, oppName = name, spec = spec, wager = d.wager, at = clock(), opp = { d = 0, v = 0, at = clock() } }
@@ -2066,7 +2079,7 @@ end
 
 -- ---------------------------------------------------------------- actions
 function R.challenge(player, spec, wager)
-  if R.state == 'finished' or (R.state == 'idle' and R.run and not R.busy()) then reset() end
+  if R.state == 'finished' or (R.state == 'idle' and R.run and not R.busy()) then R.settle() reset() end
   if R.state ~= 'idle' or R.busy() then return false end
   wager = math.max(0, math.floor(wager or 0))
   if wager > XM.cash() then toast('Not enough cash', 'Lower the wager', '⚠️') return false end
@@ -2117,7 +2130,7 @@ function R.abort()
     R.run = nil
   end
 end
-function R.dismiss() if R.state == 'finished' or R.state == 'idle' then reset() end R.run = nil end
+function R.dismiss() if R.state == 'finished' or R.state == 'idle' then R.settle() reset() end R.run = nil end
 
 function R.soloArm(spec)
   if R.busy() or R.state ~= 'idle' then return end
