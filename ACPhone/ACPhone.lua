@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.4.5'
-local BUILD = 35
+local VERSION = '1.4.6'
+local BUILD = 36
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -7781,6 +7781,106 @@ function C.switches()
 end
 function C.toggleSwitch(sw) if ac.setExtraSwitch then ac.setExtraSwitch(sw.index, not sw.on) end end
 
+
+-- ---- body panels moved straight from the car model (works on cars with no switches, as long as the parts are named in the model)
+C.PARTS = {
+  { id = 'bonnet', name = 'Bonnet', pat = 'hood*,bonnet*,capot*,bonnet', kind = 'hood', deg = 55 },
+  { id = 'trunk',  name = 'Boot',   pat = 'trunk*,boot*,tailgate*,hatch*,bootlid*,trunklid*', kind = 'trunk', deg = 58 },
+  { id = 'dlf',    name = 'Front left door',  pat = 'doorlf*,door_lf*,door_l_f*,doorfl*,door_fl*,door_l,door_left*', kind = 'door', deg = 62 },
+  { id = 'drf',    name = 'Front right door', pat = 'doorrf*,door_rf*,door_r_f*,doorfr*,door_fr*,door_r,door_right*', kind = 'door', deg = 62 },
+  { id = 'dlr',    name = 'Rear left door',   pat = 'doorlr*,door_lr*,door_l_r*,doorrl*,door_rl*,doorlb*', kind = 'door', deg = 58 },
+  { id = 'drr',    name = 'Rear right door',  pat = 'doorrr*,door_rr*,door_r_r*,doorrr*,door_rr*,doorrb*', kind = 'door', deg = 58 },
+}
+C.partState = {}
+local function rotPoint(axis, a, x, y, z)
+  local c, sn = math.cos(a), math.sin(a)
+  if axis == 'x' then return x, y * c - z * sn, y * sn + z * c end
+  return x * c + z * sn, y, -x * sn + z * c
+end
+C.rotPoint = rotPoint
+
+function C.partScan()
+  local id = safe(ac.getCarID, 0) or 'car'
+  if C.scanned == id then return end
+  C.scanned = id
+  -- put anything still open back before switching cars
+  C.partState = {}
+  local root = safe(ac.findNodes, 'carRoot:0')
+  if not root then return end
+  for _, def in ipairs(C.PARTS) do
+    local refs = {}
+    local found = safe(function() return root:findNodes(def.pat) end)
+    local n = found and safe(function() return found:size() end) or 0
+    for i = 1, math.min(n, 4) do
+      local ref = safe(function() return found:at(i) end)
+      if ref then
+        local base = safe(function() return ref:getPosition() end)
+        local look = safe(function() return ref:getLook() end)
+        local up = safe(function() return ref:getUp() end)
+        local mn, mx = safe(function() return ref:getLocalAABB() end)
+        -- only plain nodes (no baked-in rotation) can be swung safely
+        if base and look and up and mn and mx and math.abs(look.z - 1) < 0.01 and math.abs(up.y - 1) < 0.01 and mx.x - mn.x > 0.01 then
+          refs[#refs + 1] = { ref = ref, bx = base.x, by = base.y, bz = base.z, mn = mn, mx = mx }
+        end
+      end
+    end
+    if #refs > 0 then C.partState[def.id] = { def = def, refs = refs, t = 0, target = 0 } end
+  end
+end
+
+local function applyPart(st)
+  local def = st.def
+  local th = math.rad(def.deg) * st.t
+  for _, r in ipairs(st.refs) do
+    local cx, cy = (r.mn.x + r.mx.x) / 2, (r.mn.y + r.mx.y) / 2
+    local axis, a, px, py, pz
+    if def.kind == 'hood' then axis, a, px, py, pz = 'x', -th, cx, r.mx.y, r.mn.z
+    elseif def.kind == 'trunk' then axis, a, px, py, pz = 'x', th, cx, r.mx.y, r.mx.z
+    else
+      local s = cx >= 0 and 1 or -1
+      axis, a, px, py, pz = 'y', -s * th, cx, cy, r.mx.z
+    end
+    local ax = axis == 'x' and vec3(1, 0, 0) or vec3(0, 1, 0)
+    local ok = pcall(function()
+      r.ref:setRotation(ax, a)
+      -- make sure the engine turns the same way as the maths below (flip if it doesn't)
+      local lk = r.ref:getLook()
+      local ex, ey, ez = rotPoint(axis, a, 0, 0, 1)
+      if lk.x * ex + lk.y * ey + lk.z * ez < 0 and math.abs(th) > 1e-4 then
+        r.ref:setRotation(ax, -a)
+      end
+      local rx, ry, rz = rotPoint(axis, a, px, py, pz)
+      r.ref:setPosition(vec3(r.bx + px - rx, r.by + py - ry, r.bz + pz - rz))
+    end)
+    if not ok then st.broken = true end
+  end
+end
+
+function C.partList()
+  pcall(C.partScan)
+  local out = {}
+  for _, def in ipairs(C.PARTS) do
+    local st = C.partState[def.id]
+    if st and not st.broken then out[#out + 1] = { id = def.id, name = def.name, on = st.target > 0.5 } end
+  end
+  return out
+end
+function C.partToggle(id)
+  local st = C.partState[id]
+  if st then st.target = st.target > 0.5 and 0 or 1 end
+end
+function C.partStep(dt)
+  for _, st in pairs(C.partState) do
+    if st.t ~= st.target then
+      local d = (st.target - st.t)
+      local stp = math.min(1, dt * 2.2)
+      st.t = math.abs(d) < 0.01 and st.target or (st.t + d * stp + (d > 0 and 0.004 or -0.004))
+      st.t = math.max(0, math.min(1, st.t))
+      applyPart(st)
+    end
+  end
+end
+
 -- ---- colour glow: tinted lights on the car (beams ahead, glow on the lamps, glow at the tail)
 local function killLights(kind)
   for _, l in ipairs(C.lights[kind] or {}) do pcall(l.dispose, l) end
@@ -7851,6 +7951,7 @@ end
 
 function C.update(dt)
   pcall(C.flashStep)
+  pcall(C.partStep, dt)
   local ok, err = pcall(C.step, dt)
   if ok then C.stepErr = nil elseif C.stepErr ~= tostring(err) then C.stepErr = tostring(err) ac.log('HackaPhone car lights: ' .. C.stepErr) end
 end
@@ -7939,19 +8040,28 @@ function APPMOD.Car.root()
     -- body: bonnet, boot, doors
     y = W.sectionHeader('Bonnet, boot and doors', y + 4)
     local sw = C.switches()
-    if #sw == 0 then
+    local parts = C.partList()
+    if #sw == 0 and #parts == 0 then
       rect(LIST.x, y, LIST.x + LIST.w, y + 86, T.cell, 14)
-      textBox('This car doesn’t expose a bonnet, boot or extra door switch to the phone. The driver door button above still works.', 13, LIST.x + 16, y + 14, LIST.x + LIST.w - 16, y + 80, T.label2)
+      textBox('This car’s model doesn’t have bonnet, boot or door parts the phone can recognise. The driver door button above still works.', 13, LIST.x + 16, y + 14, LIST.x + LIST.w - 16, y + 80, T.label2)
       y = y + 98
     else
-      W.groupBg(y, #sw)
-      for i, o in ipairs(sw) do
-        local icon = o.role == 'bonnet' and 'Bonnet' or (o.role == 'trunk' and 'Boot' or (o.role == 'door' and 'Door' or 'Extra'))
-        local v = W.toggleRow('car.sw' .. o.index, o.name, o.on, y + (i - 1) * 46, { first = i == 1, last = i == #sw, sub = icon })
-        if v ~= o.on then C.toggleSwitch(o) end
+      local total = #parts + #sw
+      W.groupBg(y, total)
+      local row = 0
+      for _, o in ipairs(parts) do
+        local v = W.toggleRow('car.pt' .. o.id, o.name, o.on, y + row * 46, { first = row == 0, last = row == total - 1, sub = o.on and 'Open' or 'Closed' })
+        if v ~= o.on then C.partToggle(o.id) end
+        row = row + 1
       end
-      y = y + #sw * 46
-      y = W.sectionFooter('Bonnet, boot and extra doors appear here when the car’s mod defines them as switches.', y + 6)
+      for _, o in ipairs(sw) do
+        local icon = o.role == 'bonnet' and 'Bonnet' or (o.role == 'trunk' and 'Boot' or (o.role == 'door' and 'Door' or 'Extra'))
+        local v = W.toggleRow('car.sw' .. o.index, o.name, o.on, y + row * 46, { first = row == 0, last = row == total - 1, sub = icon })
+        if v ~= o.on then C.toggleSwitch(o) end
+        row = row + 1
+      end
+      y = y + total * 46
+      y = W.sectionFooter('Panels move on your screen only. Cars that define their own switches are listed too.', y + 6)
     end
     scrollEnd(s, y + 20)
     navBar('Car', { large = true }, s.y)

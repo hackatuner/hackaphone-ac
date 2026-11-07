@@ -1,12 +1,12 @@
 {
-  "version": "1.4.5",
-  "build": 35,
-  "notes": "Fixed friends' custom liveries not showing online.",
+  "version": "1.4.6",
+  "build": 36,
+  "notes": "Car app: bonnet, boot and doors now open on supported cars.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 437579
+      "size": 442280
     },
     {
       "path": "manifest.ini",
