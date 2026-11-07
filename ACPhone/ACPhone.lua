@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.4.9'
-local BUILD = 39
+local VERSION = '1.5.0'
+local BUILD = 40
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -1392,7 +1392,9 @@ XM.TOKENS, XM.TOK_BY = TOKENS, TOK_BY
 local function priceAt(t, ts)
   local x = ts
   local w = 0.5 * math.sin(x / 1800 * 6.2832 + t.ph) + 0.3 * math.sin(x / 420 * 6.2832 + t.ph * 1.7) + 0.2 * math.sin(x / 95 * 6.2832 + t.ph * 2.3)
-  return math.max(t.base * 0.2, t.base * (1 + t.vol * w))
+  -- Nitro Bond grows tenfold over ten minutes from the release moment, the same on every phone
+  local g = t.id == 'NOS' and (1 + 10 * math.max(0, math.min(1, (ts - 1794083935) / 600))) or 1
+  return math.max(t.base * 0.2, t.base * (1 + t.vol * w)) * g
 end
 XM.priceAt = priceAt
 function XM.price(id) return priceAt(TOK_BY[id], os.time()) end
@@ -1659,7 +1661,7 @@ local function send(d)
   if not ecoSend then return end
   d.kind = d.kind or 0
   d.to, d.id, d.item, d.qty, d.price = d.to or 0, d.id or 0, d.item or 0, d.qty or 0, d.price or 0
-  d.wealth = math.floor(XM.netWorth())
+  d.wealth = math.floor(math.min(XM.netWorth(), 2100000000))
   pcall(ecoSend, d, true)
 end
 

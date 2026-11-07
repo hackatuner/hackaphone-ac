@@ -1,12 +1,12 @@
 {
-  "version": "1.4.9",
-  "build": 39,
-  "notes": "Race challenges are now reliable.",
+  "version": "1.5.0",
+  "build": 40,
+  "notes": "Market update.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 446194
+      "size": 446412
     },
     {
       "path": "manifest.ini",
