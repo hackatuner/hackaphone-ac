@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.3.4'
-local BUILD = 29
+local VERSION = '1.4.0'
+local BUILD = 30
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -3660,7 +3660,7 @@ function WALL.import()
 end
 end
 
-local APPMOD = { Messages = {}, Friends = {}, Camera = {}, Walk = {}, Video = {}, Chase = {}, Plates = {}, Skins = {}, Weather = {}, Library = {}, Settings = {}, Maps = {}, Hud = {}, Livery = {}, Themes = {}, CutUp = {}, Music = {}, Leaders = {}, Bank = {}, Market = {}, Power = {}, Runs = {}, Vault = {}, Race = {}, Car = {} }
+local APPMOD = { Messages = {}, Friends = {}, Camera = {}, Walk = {}, Video = {}, Chase = {}, Plates = {}, Skins = {}, Weather = {}, Library = {}, Settings = {}, Maps = {}, Hud = {}, Livery = {}, Themes = {}, CutUp = {}, Music = {}, Leaders = {}, Bank = {}, Market = {}, Power = {}, Runs = {}, Vault = {}, Race = {}, Car = {}, CamEdit = {} }
 
 -- ===========================================================================
 -- Shared pieces for app screens
@@ -7901,6 +7901,162 @@ end
 
 end
 -- ===========================================================================
+-- CAM EDITOR: the Assetto Corsa camera editor on your phone. Cockpit seat, FOV,
+-- every F6 car camera, plus one-tap switching between all the drivable views.
+-- ===========================================================================
+
+XM.cam = { tab = 1, f6 = 0, base = {} }
+
+do
+local K = XM.cam
+local function sim() return ac.getSim() end
+local function seat()
+  local ok, p = pcall(ac.getOnboardCameraParams, 0)
+  if ok and type(p) == 'table' and p.position and type(p.pitch) == 'number' then return p end
+end
+local function seatDefault()
+  local ok, p = pcall(ac.getOnboardCameraDefaultParams, 0)
+  if ok and type(p) == 'table' and p.position and type(p.pitch) == 'number' then return p end
+end
+local function seatSet(pos, pitch, yaw)
+  pcall(function() ac.setOnboardCameraParams(0, ac.SeatParams(pos, pitch, yaw), true) end)
+end
+
+function K.goCockpit() pcall(ac.setCurrentCamera, 0) end
+function K.goDrivable(i) pcall(ac.setCurrentCamera, 2) pcall(ac.setCurrentDrivableCamera, i) end
+function K.goF6(i) pcall(ac.setCurrentCamera, 1) pcall(ac.setCurrentCarCamera, i) end
+
+local function card(y, h, tint)
+  rect(LIST.x, y, LIST.x + LIST.w, y + h, tint or T.cell, 18)
+end
+-- one slider tile with a big live value
+local function dial(id, label, v, lo, hi, fmt, y, tint)
+  card(y, 78, tint)
+  local nv, ch = W.sliderRow(id, label, v, lo, hi, fmt, y, { last = true })
+  return ch and nv or v, ch, y + 88
+end
+
+local function hero(title, sub, big, y)
+  local ac1 = accent()
+  rect(16, y, SW - 16, y + 104, mix(T.cell, ac1, 0.14), 24)
+  rectLine(16, y, SW - 16, y + 104, A(ac1, 0.5), 24, 1.5)
+  text(title, 12, 34, y + 16, A(ac1, 1), F.b)
+  textFit(sub, 13, 34, y + 36, SW - 150, T.label2, F.m)
+  text(big, 40, SW - 34, y + 30, T.white, F.numb, 1)
+  return y + 118
+end
+
+function APPMOD.CamEdit.root()
+  local scr = { title = 'Cam Editor' }
+  function scr.draw()
+    bgFill()
+    local s = scrollBegin('camedit', 50, BOTTOM)
+    local y = largeTitle('Cam Editor', 96, s.y)
+    K.tab = W.segmented('ce.tab', { 'Cockpit', 'Views', 'F6 Cams' }, K.tab, 16, y, SW - 32)
+    y = y + 48
+    local sm = sim()
+    if K.tab == 1 then
+      -- driver seat: exactly what AC's own camera positioning app edits
+      local p, d = seat(), seatDefault()
+      y = hero('COCKPIT CAMERA', p and 'Your seat, saved per car' or 'Not available right now', string.format('%d°', math.floor((sm.firstPersonCameraFOV or 56) + 0.5)), y)
+      if W.button('ce.cp', 'Look through it now', 16, y, SW - 32, 44, 'filled') then K.goCockpit() end
+      y = y + 56
+      local fov = sm.firstPersonCameraFOV or 56
+      local nf, ch = dial('ce.fov', 'Field of view', fov, 20, 120, '%.0f°', y)
+      if ch then pcall(ac.setFirstPersonCameraFOV, nf) end
+      y = y + 88
+      if p then
+        local px, py, pz = p.position.x, p.position.y, p.position.z
+        local dx, dy, dz = d and d.position.x or px, d and d.position.y or py, d and d.position.z or pz
+        local changed
+        local nx, c1 = dial('ce.x', 'Left / right', px, dx - 0.4, dx + 0.4, '%.3f m', y) y = y + 88
+        local ny, c2 = dial('ce.y', 'Height', py, dy - 0.3, dy + 0.3, '%.3f m', y) y = y + 88
+        local nz, c3 = dial('ce.z', 'Forward / back', pz, dz - 0.5, dz + 0.5, '%.3f m', y) y = y + 88
+        local np, c4 = dial('ce.p', 'Look up / down', p.pitch, -25, 25, '%.1f°', y) y = y + 88
+        local nyaw, c5 = dial('ce.w', 'Look left / right', p.yaw, -30, 30, '%.1f°', y) y = y + 88
+        if c1 or c2 or c3 or c4 or c5 then seatSet(vec3(nx, ny, nz), np, nyaw) end
+        local bw = (SW - 40) / 2
+        if W.button('ce.rs', 'Reset seat', 16, y, bw, 44, 'gray') and d then seatSet(d.position, d.pitch, d.yaw or 0) end
+        if W.button('ce.rf', 'Reset FOV', 24 + bw, y, bw, 44, 'gray') then pcall(ac.resetFirstPersonCameraFOV) end
+        y = y + 56
+        y = W.sectionFooter('Moves your eye point live and saves it for this car. Reset puts it back to the car’s original view.', y)
+      else
+        y = W.sectionFooter('This car doesn’t expose its cockpit camera to the phone. FOV still works.', y)
+      end
+    elseif K.tab == 2 then
+      local views = {
+        { 'Cockpit', 'Driver seat', function() K.goCockpit() end, sm.cameraMode == 0 },
+        { 'Chase', 'Behind the car', function() K.goDrivable(0) end, sm.cameraMode == 2 and sm.driveableCameraMode == 0 },
+        { 'Chase 2', 'Higher chase', function() K.goDrivable(1) end, sm.cameraMode == 2 and sm.driveableCameraMode == 1 },
+        { 'Bonnet', 'On the bonnet', function() K.goDrivable(2) end, sm.cameraMode == 2 and sm.driveableCameraMode == 2 },
+        { 'Bumper', 'Low at the front', function() K.goDrivable(3) end, sm.cameraMode == 2 and sm.driveableCameraMode == 3 },
+        { 'Dash', 'Over the dashboard', function() K.goDrivable(4) end, sm.cameraMode == 2 and sm.driveableCameraMode == 4 },
+      }
+      local gw, gh = (SW - 32 - 10) / 2, 84
+      for i, v in ipairs(views) do
+        local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
+        local x, vy = 16 + col * (gw + 10), y + row * (gh + 10)
+        local fired = tap('ce.v' .. i, x, vy, x + gw, vy + gh)
+        local a = anim('ce.va' .. i, v[4] and 1 or 0, 14)
+        rect(x, vy, x + gw, vy + gh, mix(T.cell, A(accent(), 0.32), a), 18)
+        if a > 0.02 then rectLine(x, vy, x + gw, vy + gh, A(accent(), 0.9 * a), 18, 1.5) end
+        text(v[1], 16, x + 16, vy + 18, T.white, F.b)
+        text(v[2], 12, x + 16, vy + 44, v[4] and accent() or T.label2, F.m)
+        if fired then v[3]() end
+      end
+      y = y + 3 * (gh + 10) + 6
+      y = W.sectionFooter('Tap a view to switch to it straight away. The cockpit tab edits your seat; the F6 tab edits the fixed car cameras.', y)
+    else
+      local car = ac.getCar(0)
+      local n = car and car.carCamerasCount or 0
+      if n <= 0 then
+        card(y, 90)
+        textBox('This car has no F6 cameras to edit.', 14, LIST.x + 18, y + 18, LIST.x + LIST.w - 18, y + 76, T.label2)
+        y = y + 100
+      else
+        K.f6 = clamp(K.f6, 0, n - 1)
+        local okc, cam = pcall(ac.accessCarCamera, K.f6)
+        if not okc or type(cam) ~= 'table' and type(cam) ~= 'userdata' then cam = nil end
+        y = hero('F6 CAMERA ' .. (K.f6 + 1) .. ' OF ' .. n, cam and 'Fixed camera on your car' or 'Not available', cam and string.format('%d°', math.floor(cam.fov + 0.5)) or '--', y)
+        local bw = (SW - 40) / 3
+        if W.button('ce.pv', '‹ Prev', 16, y, bw, 44, 'gray') then K.f6 = (K.f6 - 1) % n end
+        if W.button('ce.go', 'View it', 20 + bw, y, bw, 44, 'filled') then K.goF6(K.f6) end
+        if W.button('ce.nx', 'Next ›', 24 + 2 * bw, y, bw, 44, 'gray') then K.f6 = (K.f6 + 1) % n end
+        y = y + 58
+        if cam then
+          K.base[K.f6] = K.base[K.f6] or { fov = cam.fov, exp = cam.exposure, pos = vec3(cam.transform.position.x, cam.transform.position.y, cam.transform.position.z) }
+          local b = K.base[K.f6]
+          local nf, c1 = dial('ce.f6f', 'Field of view', cam.fov, 10, 120, '%.0f°', y) y = y + 88
+          if c1 then cam.fov = nf end
+          local ne, c2 = dial('ce.f6e', 'Exposure', cam.exposure or 1, 0.1, 4, '%.2f', y) y = y + 88
+          if c2 then cam.exposure = ne end
+          local t = cam.transform
+          local px, py, pz = t.position.x, t.position.y, t.position.z
+          local nx, c3 = dial('ce.f6x', 'Left / right', px, b.pos.x - 1.5, b.pos.x + 1.5, '%.2f m', y) y = y + 88
+          local ny, c4 = dial('ce.f6y', 'Height', py, b.pos.y - 1.5, b.pos.y + 1.5, '%.2f m', y) y = y + 88
+          local nz, c5 = dial('ce.f6z', 'Forward / back', pz, b.pos.z - 2, b.pos.z + 2, '%.2f m', y) y = y + 88
+          if c3 or c4 or c5 then
+            pcall(function() local m = cam.transform m.position = vec3(nx, ny, nz) cam.transform = m end)
+          end
+          local nc, c6 = dial('ce.f6c', 'Near clip', cam.clipNear or 0.1, 0.01, 1, '%.2f m', y) y = y + 88
+          if c6 then cam.clipNear = nc end
+          if W.button('ce.f6r', 'Reset this camera', 16, y, SW - 32, 44, 'gray') then
+            cam.fov, cam.exposure = b.fov, b.exp
+            pcall(function() local m = cam.transform m.position = b.pos cam.transform = m end)
+          end
+          y = y + 56
+          y = W.sectionFooter('Changes apply live to the camera you’re viewing. They last for this session; reset puts the camera back.', y)
+        end
+      end
+    end
+    scrollEnd(s, y + 20)
+    navBar('Cam Editor', { large = true }, s.y)
+  end
+  return scr
+end
+
+end
+-- ===========================================================================
 -- App registry
 -- ===========================================================================
 
@@ -7926,6 +8082,7 @@ local APPS = {
   { id = 'vault',    name = 'Vault',    icon = '@SAVE', c1 = rgbm(0.25, 0.25, 0.30, 1), c2 = rgbm(0.05, 0.05, 0.08, 1), root = APPMOD.Vault.root },
   { id = 'race',     name = 'Race',     icon = '@FLAG', c1 = rgbm(1.00, 0.30, 0.30, 1), c2 = rgbm(0.65, 0.05, 0.10, 1), root = APPMOD.Race.root, badge = function() return XM.race.state == 'invited_in' and 1 or 0 end },
   { id = 'car',      name = 'Car',      icon = '@CAR_FRONT', c1 = rgbm(0.30, 0.75, 1.00, 1), c2 = rgbm(0.08, 0.35, 0.80, 1), root = APPMOD.Car.root },
+  { id = 'camedit',  name = 'Cam Editor', icon = '@SLIDERS', c1 = rgbm(0.35, 0.85, 0.75, 1), c2 = rgbm(0.10, 0.45, 0.65, 1), root = APPMOD.CamEdit.root },
   { id = 'music',    name = 'Music',    icon = '@MUSIC', c1 = rgbm(1.00, 0.36, 0.45, 1), c2 = rgbm(0.86, 0.10, 0.30, 1), root = APPMOD.Music.root },
   { id = 'weather',  name = 'Weather',  icon = '@WEATHER_FEW_CLOUDS', c1 = rgbm(0.45, 0.75, 1.00, 1), c2 = rgbm(0.15, 0.45, 0.90, 1), root = APPMOD.Weather.root },
   { id = 'library',  name = 'Apps',     icon = '@APPS', c1 = rgbm(0.45, 0.50, 1.00, 1), c2 = rgbm(0.25, 0.25, 0.80, 1), root = APPMOD.Library.root },
@@ -7935,7 +8092,7 @@ local APP_BY_ID = {}
 APPMOD.APPS = APPS
 for _, a in ipairs(APPS) do APP_BY_ID[a.id] = a end
 local DOCK = { 'messages', 'music', 'camera', 'settings' }
-local GRID = { 'cutup', 'leaders', 'maps', 'friends', 'walk', 'video', 'chase', 'livery', 'skins', 'plates', 'hud', 'weather', 'themes', 'library', 'runs', 'race', 'power', 'bank', 'market', 'vault', 'car' }
+local GRID = { 'cutup', 'leaders', 'maps', 'friends', 'walk', 'video', 'chase', 'livery', 'skins', 'plates', 'hud', 'weather', 'themes', 'library', 'runs', 'race', 'power', 'bank', 'market', 'vault', 'car', 'camedit' }
 
 APPMOD.openApp = function(id) APPMOD.openAppImpl(id) end
 local appIconRects = {}   -- id -> {x, y, size} for open/close zoom
@@ -8666,7 +8823,7 @@ end
 -- ---- home layout: three pages, apps can be moved between them or removed (long-press)
 HOME.PAGES = 3
 function HOME.defaultLayout()
-  local p2 = { 'car', 'race', 'runs', 'power', 'bank', 'market', 'vault' }
+  local p2 = { 'car', 'camedit', 'race', 'runs', 'power', 'bank', 'market', 'vault' }
   local in2 = {}
   for _, id in ipairs(p2) do in2[id] = true end
   local p1 = {}

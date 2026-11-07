@@ -1,12 +1,12 @@
 {
-  "version": "1.3.4",
-  "build": 29,
-  "notes": "1.3.4: race invites now pop up on any screen with Accept and Decline; the Race app always opens on the invite; stale race states no longer auto-decline invites.",
+  "version": "1.4.0",
+  "build": 30,
+  "notes": "1.4.0: new Cam Editor app (cockpit seat, FOV, drivable views, every F6 camera).",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 421379
+      "size": 430111
     },
     {
       "path": "manifest.ini",
