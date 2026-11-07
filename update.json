@@ -1,27 +1,31 @@
 {
-  "version": "1.4.1",
-  "build": 31,
-  "notes": "1.4.1: Cam Editor now edits Chase, Chase 2, Bonnet, Bumper and Dash cameras (position, angle, tilt, FOV) per car.",
+  "version": "1.4.3",
+  "build": 33,
+  "notes": "Improvements and fixes.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 435616
+      "size": 438066,
+      "sha256": "1c919e911d9fd74e99240bbfb49129296470af81c495ed89f4400f2059f19307"
     },
     {
       "path": "manifest.ini",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/manifest.ini",
-      "size": 874
+      "size": 874,
+      "sha256": "3abd60cdf6df1f02b90cc5484e5bb89d4defbd46815d1e4958d10fbb75ed086b"
     },
     {
       "path": "README.md",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/README.md",
-      "size": 12095
+      "size": 12095,
+      "sha256": "d4a95db3e0f25b6e44f88bbedbc39d66573fa055d2494e486216cb66119c4ffb"
     },
     {
       "path": "icon.png",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/icon.png",
-      "size": 2202
+      "size": 2202,
+      "sha256": "73ea212e036e8725c0e4f5fc3791d7995974ed51679db73c24dfe6b1e5137c59"
     }
   ]
 }
