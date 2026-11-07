@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.4.7'
-local BUILD = 37
+local VERSION = '1.4.8'
+local BUILD = 38
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -5565,12 +5565,26 @@ local liveryEvent = ac.OnlineEvent({
   if not cfg then return end
   -- friends re-send every so often for late joiners; skip the redundant repaint
   local prev = LV.othersRaw and LV.othersRaw[sender.index]
-  if prev and prev.raw == raw and clock() - prev.t < 90 then return end
   LV.othersRaw = LV.othersRaw or {}
   LV.othersRaw[sender.index] = { raw = raw, t = clock() }
+  -- same livery as before and the sender has been around: nothing to repaint
+  if prev and prev.raw == raw and clock() - prev.t < 100 then return end
   LV.others[sender.index] = cfg
-  if cfg.on then lvApply(sender.index, cfg) else SK.skinApply(sender.index, SK.skinActive(sender.index)) end
+  -- repaints are queued and done one at a time so a busy server never causes a hitch
+  LV.queue = LV.queue or {}
+  LV.queue[sender.index] = cfg
 end)
+
+local function lvDrain()
+  if not LV.queue then return end
+  for idx, cfg in pairs(LV.queue) do
+    LV.queue[idx] = nil
+    pcall(function()
+      if cfg.on then lvApply(idx, cfg) else SK.skinApply(idx, SK.skinActive(idx)) end
+    end)
+    return
+  end
+end
 
 local function lvBroadcast()
   if S.liverySync then pcall(liveryEvent, { data = lvPack(LV.cfg) }, true) end
@@ -5829,7 +5843,9 @@ LIVERY_API.shaderOK = function() return LV.shaderOK end
 LIVERY_API.broadcast = lvBroadcast
 LIVERY_API.tick = function(dt)
   LV.bt = (LV.bt or 0) + dt
-  if LV.bt > 20 then
+  LV.dt_ = (LV.dt_ or 0) + dt
+  if LV.dt_ > 0.5 then LV.dt_ = 0 lvDrain() end
+  if LV.bt > 45 then
     LV.bt = 0
     if LV.cfg.on and ac.getSim().isOnlineRace then lvBroadcast() end
   end

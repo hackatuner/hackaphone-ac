@@ -1,12 +1,12 @@
 {
-  "version": "1.4.7",
-  "build": 37,
-  "notes": "Fixed the phone jumping on screen.",
+  "version": "1.4.8",
+  "build": 38,
+  "notes": "Smoother online play: lighter friend livery updates.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 443686
+      "size": 444137
     },
     {
       "path": "manifest.ini",
