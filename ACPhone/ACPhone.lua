@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.5.1'
-local BUILD = 41
+local VERSION = '1.5.2'
+local BUILD = 42
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -104,7 +104,7 @@ local S = ac.storage({
   cash = 1000, saved = 0, savedAt = 0, listSeq = 0, pwEquip = '', title = 'rookie',
   perks = '{}', titles = '{}', hold = '{}', inv = '{}', txLog = '[]', runLog = '[]', myList = '[]',
   -- race mode
-  raceWins = 0, raceLosses = 0, raceStreak = 0, raceBests = '{}', raceLog = '[]',
+  raceWins = 0, raceLosses = 0, raceStreak = 0, raceBests = '{}', raceLog = '[]', userLog = '{}',
   -- camera angles
   shotCfg = '{}', shotPresets = '{}',
   -- welcome screen
@@ -4093,6 +4093,8 @@ function APPMOD.Friends.root()
     local s = scrollBegin('friends', 50, BOTTOM)
     local y = largeTitle('Friends', 96, s.y)
     local online = ac.getSim().isOnlineRace
+    if XM.usersScreen and W.button('fr.users', '👥  HackaPhone users', 16, y, SW - 32, 40, 'tinted') then navPush(XM.usersScreen()) end
+    y = y + 50
     if #players == 0 then
       text(online and '🏁' or '📡', 44, SW / 2, y + 80, T.white, F.r, 0.5)
       text(online and 'Nobody else is here yet' or 'You’re offline', 20, SW / 2, y + 150, T.label, F.sb, 0.5)
@@ -8393,6 +8395,93 @@ function APPMOD.CamEdit.root()
 end
 
 end
+
+
+-- ===========================================================================
+-- HackaPhone users met on servers: who is running the app, which version, when last seen (kept on this phone only)
+-- ===========================================================================
+XM.users = {}
+do
+local U = XM.users
+local function ago(t)
+  local d = os.time() - t
+  if d < 60 then return 'just now' end
+  if d < 3600 then return math.floor(d / 60) .. ' min ago' end
+  if d < 86400 then return math.floor(d / 3600) .. ' h ago' end
+  return math.floor(d / 86400) .. ' d ago'
+end
+function U.note(name, ver, build, minGap)
+  if not name or name == '' then return end
+  local db = XM.jget('userLog', {})
+  local e = db[name]
+  local now = os.time()
+  if e and minGap and now - (e.last or 0) < minGap and not ver then return end
+  e = e or { first = now }
+  e.last = now
+  if ver and ver ~= '' then e.ver, e.build = ver, build end
+  e.server = (ac.getServerName and ac.getServerName() or '') or ''
+  db[name] = e
+  local n = 0
+  for _ in pairs(db) do n = n + 1 end
+  if n > 300 then   -- forget the longest-gone
+    local oldK, oldT
+    for k, v in pairs(db) do if not oldT or (v.last or 0) < oldT then oldK, oldT = k, v.last or 0 end end
+    if oldK then db[oldK] = nil end
+  end
+  XM.jset('userLog', db)
+end
+
+local verEvent = ac.OnlineEvent({
+  ac.StructItem.key('acphone.ver.v1'),
+  ver = ac.StructItem.string(12), build = ac.StructItem.int32(),
+}, function(sender, d)
+  if not sender or sender.index == 0 then return end
+  pcall(U.note, ac.getDriverName(sender.index), tostring(d.ver), d.build)
+end)
+-- announce my version once; the game re-sends it to anyone who joins later
+function U.announce() pcall(verEvent, { ver = VERSION, build = BUILD }, true) end
+-- anyone sending presence is running the app (older versions don't announce a version)
+function U.tick(dt)
+  U.t = (U.t or 0) + dt
+  if U.t < 15 then return end
+  U.t = 0
+  if not ac.getSim().isOnlineRace then return end
+  for _, p in ipairs(getPlayers()) do if p.hasApp then pcall(U.note, p.name, nil, nil, 300) end end
+end
+
+function XM.usersScreen()
+  local scr = { title = 'HackaPhone users' }
+  function scr.draw()
+    bgFill()
+    local s = scrollBegin('users', 94, BOTTOM)
+    local y = 104
+    local db = XM.jget('userLog', {})
+    local list = {}
+    for name, e in pairs(db) do list[#list + 1] = { name = name, e = e } end
+    table.sort(list, function(a, b) return (a.e.last or 0) > (b.e.last or 0) end)
+    if #list == 0 then
+      textBox('Nobody yet. Everyone running HackaPhone on a server you join is remembered here, with their version.', 14, 40, y + 10, SW - 40, y + 90, T.label2)
+      y = y + 100
+    else
+      local latest = 0
+      for _, r in ipairs(list) do latest = math.max(latest, tonumber(r.e.build) or 0) end
+      y = W.sectionHeader(#list .. ' users met', y)
+      W.groupBg(y, #list)
+      for i, r in ipairs(list) do
+        local e = r.e
+        local sub = (e.ver and ('v' .. e.ver) or 'old version') .. ' · ' .. ago(e.last or 0)
+        W.row('usr' .. i, r.name, y, { first = i == 1, last = i == #list, sub = sub })
+        local upToDate = (tonumber(e.build) or 0) >= math.max(latest, BUILD)
+        text(upToDate and 'Up to date' or 'Needs update', 13, SW - 32, y + 15, upToDate and T.green or T.orange or T.label2, F.r, 1)
+        y = y + 46
+      end
+    end
+    scrollEnd(s, y + 24)
+    navBar('HackaPhone users', { back = 'Friends' })
+  end
+  return scr
+end
+end
 -- ===========================================================================
 -- App registry
 -- ===========================================================================
@@ -9908,6 +9997,7 @@ function script.update(dt)
         pcall(skinRequest, { received = true })
       end
       if S.plateAutoApply and PL.text ~= '' then PL.apply(0, PL.text, PL.country) PL.broadcast() end
+      pcall(XM.users.announce)
       UPD.announce()
       XM.welcome.trigger()
       if S.actionBar then ac.setWindowOpen('actionbar', true) end
@@ -9929,6 +10019,7 @@ function script.update(dt)
   XM.race.update(dt)
   XM.vault.update(dt)
   pcall(XM.car.update, dt)
+  pcall(XM.users.tick, dt)
   -- walking/video/photo stop if the phone is closed while minimised? keep running; chase handled in camUpdate
 end
 

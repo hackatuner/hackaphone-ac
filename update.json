@@ -1,12 +1,12 @@
 {
-  "version": "1.5.1",
-  "build": 41,
-  "notes": "Fixed race winnings not paying out.",
+  "version": "1.5.2",
+  "build": 42,
+  "notes": "Friends app: list of HackaPhone users you've met.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 446978
+      "size": 450663
     },
     {
       "path": "manifest.ini",
