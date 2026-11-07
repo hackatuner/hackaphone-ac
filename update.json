@@ -1,12 +1,12 @@
 {
-  "version": "1.4.4",
-  "build": 34,
-  "notes": "Improvements and fixes.",
+  "version": "1.4.5",
+  "build": 35,
+  "notes": "Fixed friends' custom liveries not showing online.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 436947
+      "size": 437579
     },
     {
       "path": "manifest.ini",

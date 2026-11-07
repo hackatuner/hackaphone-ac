@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.4.4'
-local BUILD = 34
+local VERSION = '1.4.5'
+local BUILD = 35
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -5549,7 +5549,7 @@ local function lvUnpack(s)
   if s == 'off' then return { on = false } end
   local n = {}
   for v in s:gmatch('[^,]+') do n[#n + 1] = tonumber(v) or 0 end
-  if #n < 22 then return nil end
+  if #n < 18 then return nil end
   local function c(i) return { n[i] / 255, n[i + 1] / 255, n[i + 2] / 255 } end
   return { on = true, c1 = c(1), c2 = c(4), pattern = n[7], finish = n[8], full = n[9] == 1, strength = n[10] / 100,
     rimsOn = n[11] == 1, rims = c(12), calOn = n[15] == 1, cal = c(16) }
@@ -5560,8 +5560,14 @@ local liveryEvent = ac.OnlineEvent({
   data = ac.StructItem.string(96),
 }, function(sender, msg)
   if not sender or sender.index == 0 or not S.liveryShowOthers then return end
-  local cfg = lvUnpack(tostring(msg.data))
+  local raw = tostring(msg.data)
+  local cfg = lvUnpack(raw)
   if not cfg then return end
+  -- friends re-send every so often for late joiners; skip the redundant repaint
+  local prev = LV.othersRaw and LV.othersRaw[sender.index]
+  if prev and prev.raw == raw and clock() - prev.t < 90 then return end
+  LV.othersRaw = LV.othersRaw or {}
+  LV.othersRaw[sender.index] = { raw = raw, t = clock() }
   LV.others[sender.index] = cfg
   if cfg.on then lvApply(sender.index, cfg) else SK.skinApply(sender.index, SK.skinActive(sender.index)) end
 end)
@@ -5821,6 +5827,14 @@ LIVERY_API.apply = lvApply
 LIVERY_API.selfTest = function() LV.selfTest() end
 LIVERY_API.shaderOK = function() return LV.shaderOK end
 LIVERY_API.broadcast = lvBroadcast
+LIVERY_API.tick = function(dt)
+  LV.bt = (LV.bt or 0) + dt
+  if LV.bt > 20 then
+    LV.bt = 0
+    if LV.cfg.on and ac.getSim().isOnlineRace then lvBroadcast() end
+  end
+end
+LIVERY_API.unpack, LIVERY_API.pack = lvUnpack, lvPack
 LIVERY_API.cfg = function() return LV.cfg end
 end
 
@@ -8275,7 +8289,7 @@ if rawget(_G, '__ACPHONE_TEST') then
   T_.walkStart, T_.videoStart, T_.S, T_.IN, T_.UPD = walkStart, videoStart, S, IN, UPD
   T_.HESI, T_.applyTheme, T_.buildFonts = HESI, applyTheme, buildFonts
   T_.XM, T_.APPMOD, T_.VIDEO_SHOTS, T_.camRelease, T_.MEDIA = XM, APPMOD, VIDEO_SHOTS, camRelease, MEDIA
-  T_.LIVERY = { selfTest = LIVERY_API.selfTest, apply = LIVERY_API.apply, cfg = LIVERY_API.cfg, shaderOK = LIVERY_API.shaderOK }
+  T_.LIVERY = { selfTest = LIVERY_API.selfTest, apply = LIVERY_API.apply, cfg = LIVERY_API.cfg, shaderOK = LIVERY_API.shaderOK, unpack = LIVERY_API.unpack, pack = LIVERY_API.pack }
 end
 
 UPD.openScreen = function()
@@ -9693,6 +9707,7 @@ function script.update(dt)
   end
   shutterTick()
   PL.update()
+  pcall(LIVERY_API.tick, dt)
   liveUpdate()
   UPD.tick()
   PHONE.lapTrack()
