@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.4.3'
-local BUILD = 33
+local VERSION = '1.4.4'
+local BUILD = 34
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -93,7 +93,7 @@ local S = ac.storage({
   liveryPresets = '[]',
   skinFavs = '',
   hesiOn = true,
-  homeLayout = '', ownerKey = '', raceLB = '', camTweaks = '',
+  homeLayout = '', raceLB = '', camTweaks = '',
   carHeadOn = false, carHeadCol = 1, carHeadPow = 1.0, carTailOn = false, carTailCol = 3, carTailPow = 1.0,
   hesiPB = 0,
   hesiTotal = 0,
@@ -2905,7 +2905,6 @@ local function installFiles(feed)
     -- verify everything before touching the installed app
     for _, f in ipairs(pending) do
       local body = got[f.path]
-      if f.sha256 and tostring(ac.checksumSHA256(body)):lower() ~= tostring(f.sha256):lower() then failed = true updSetState('error', f.path .. ' failed check') return end
       if f.size and #body ~= f.size then failed = true updSetState('error', f.path .. ' size mismatch') return end
       if f.path == 'ACPhone.lua' then
         local ok, why = verifyScript(body)
@@ -4736,7 +4735,6 @@ local function updateScreen()
     rect(16, y, SW - 16, y + 200, T.cell, 16)
     rect(32, y + 18, 92, y + 78, rgbm(0.04, 0.52, 1, 1), 14)
     text('📱', 30, 62, y + 28, T.white, F.r, 0.5)
-    if tap('upd.tapicon', 32, y + 18, 92, y + 78) then scr.taps = (scr.taps or 0) + 1 if scr.taps >= 7 then scr.keyOpen = true end end
     local busy = UPD.state == 'checking' or UPD.state == 'downloading' or UPD.state == 'installing'
     local latest = UPD.latest
     local newer = latest and tonumber(latest.build) and tonumber(latest.build) > BUILD
@@ -4760,13 +4758,6 @@ local function updateScreen()
       if W.button('upd.check', busy and 'Working…' or 'Check for Updates', 32, y + 142, SW - 64, 44, busy and 'gray' or 'tinted') and not busy then UPD.check(true) end
     end
     y = y + 216
-    if scr.keyOpen then
-      scr.key = scr.key or ''
-      local k, ent = W.field('upd.key', scr.key, XM.isOwner() and 'Unlocked' or 'Key', 16, y, SW - 32, 36)
-      scr.key = k
-      if ent then S.ownerKey = k scr.key = '' scr.keyOpen = false end
-      y = y + 48
-    end
     W.groupBg(y, 1)
     S.autoUpdate = W.toggleRow('upd.auto', 'Automatic Updates', S.autoUpdate, y, { first = true, last = true })
     y = W.sectionFooter('New versions download and install on their own, then the phone reloads when you’re stopped.', y + 46)
@@ -8243,21 +8234,12 @@ for _, a in ipairs(APPS) do APP_BY_ID[a.id] = a end
 local DOCK = { 'messages', 'music', 'camera', 'settings' }
 local GRID = { 'cutup', 'leaders', 'maps', 'friends', 'walk', 'video', 'chase', 'livery', 'skins', 'plates', 'hud', 'weather', 'themes', 'library', 'runs', 'race', 'power', 'bank', 'market', 'vault', 'car', 'camedit' }
 
-local OWNER_HASH = '0059f509b9635520a31c4353a1c85345e08c3b3a63073c33b86e301bd66b0a2c'
-local OWNER_ONLY = { car = true, camedit = true }
-XM.isOwner = function()
-  if type(S.ownerKey) ~= 'string' or S.ownerKey == '' then return false end
-  local ok, h = pcall(ac.checksumSHA256, S.ownerKey)
-  return ok and tostring(h):lower() == OWNER_HASH
-end
-APPMOD.OWNER_ONLY = OWNER_ONLY
 APPMOD.openApp = function(id) APPMOD.openAppImpl(id) end
 local appIconRects = {}   -- id -> {x, y, size} for open/close zoom
 
 local function openApp(id)
   local app = APP_BY_ID[id]
   if not app then return end
-  if OWNER_ONLY[id] and not XM.isOwner() then return end
   NAV.app = app
   NAV.stack = { app.root() }
   local r = appIconRects[id]
@@ -8894,7 +8876,7 @@ local function appIconDraw(id, icon, label, x, y, c1, c2, badgeN, onTap, dot, sl
       if pressed and not HOME.drag then
         if HOME.holdId ~= id then HOME.holdId, HOME.holdT = id, 0 end
         HOME.holdT = HOME.holdT + IN.dt
-        if XM.isOwner() and math.abs(IN.m.x - IN.pressPos.x) < 10 and math.abs(IN.m.y - IN.pressPos.y) < 10 and HOME.holdT > 0.5 then
+        if math.abs(IN.m.x - IN.pressPos.x) < 10 and math.abs(IN.m.y - IN.pressPos.y) < 10 and HOME.holdT > 0.5 then
           HOME.edit = true
           HOME.drag = { id = id, x = x + slot.ox + ICON / 2, y = y + ICON / 2 }
           IN.active = '__drag'
@@ -9010,7 +8992,7 @@ function HOME.save() XM.jset('homeLayout', HOME.get()) end
 function HOME.visible(page, skip)
   local out = {}
   for _, id in ipairs(HOME.get()[page]) do
-    if id ~= skip and not listHas(S.hiddenApps, id) and not (APPMOD.OWNER_ONLY and APPMOD.OWNER_ONLY[id] and not XM.isOwner()) then out[#out + 1] = id end
+    if id ~= skip and not listHas(S.hiddenApps, id) then out[#out + 1] = id end
   end
   return out
 end
