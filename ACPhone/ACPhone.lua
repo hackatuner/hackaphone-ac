@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.4.8'
-local BUILD = 38
+local VERSION = '1.4.9'
+local BUILD = 39
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -1852,15 +1852,43 @@ function R.busy() return R.run ~= nil and (R.run.phase == 'countdown' or R.run.p
 
 -- ---------------------------------------------------------------- network
 local raceSend
+-- Servers drop messages that come too fast or too close to other traffic, so everything goes through an outbox:
+-- one message at a time, retried until the game confirms it left, and the important ones are sent again a bit later.
+R.outbox, R.nextSend = {}, 0
+local function push(msg)
+  if msg.kind == 6 then   -- live progress: only the newest one matters
+    for i = #R.outbox, 1, -1 do if R.outbox[i].kind == 6 then table.remove(R.outbox, i) end end
+  end
+  R.outbox[#R.outbox + 1] = { kind = msg.kind, tries = 0, data = msg }
+end
 local function send(kind, to, f)
   if not raceSend then return end
   f = f or {}
   local c = R.cur
-  pcall(raceSend, {
+  local msg = {
     kind = kind, to = to or (c and c.oppSid) or 0, rid = f.rid or (c and c.rid) or 0, rtype = f.rtype or 0,
     x = math.floor(f.x or 0), y = math.floor(f.y or 0), wager = math.floor(f.wager or 0),
     t = f.t or 0, react = f.react or 0, d = f.d or 0, v = math.floor(f.v or 0), flags = f.flags or 0,
-  }, true)
+  }
+  push(msg)
+  if kind ~= 1 and kind ~= 6 then      -- everything except the invite (re-sent while waiting) and progress is repeated, receivers ignore duplicates
+    setTimeout(function() push(msg) end, 1.3)
+    setTimeout(function() push(msg) end, 3.1)
+  end
+end
+function R.pump()
+  local now = clock()
+  if now < R.nextSend or #R.outbox == 0 then return end
+  local item = R.outbox[1]
+  local ok, sent = pcall(raceSend, item.data)
+  item.tries = item.tries + 1
+  if ok and sent ~= false then
+    table.remove(R.outbox, 1)
+    R.nextSend = now + 0.3
+  else
+    R.nextSend = now + 0.35
+    if item.tries >= 14 then table.remove(R.outbox, 1) end
+  end
 end
 
 local function reset()
@@ -1946,6 +1974,7 @@ onEvent = function(sender, d)
   local name = ac.getDriverName(sender.index) or '?'
   local c = R.cur
   if d.kind == 1 then                                         -- invite
+    if c and c.rid == d.rid and c.oppSid == sid then return end   -- the same invite sent again
     if R.state == 'finished' or (R.state == 'idle' and R.run and not R.busy()) then reset() end   -- stale result or armed solo pull
     if R.state ~= 'idle' or R.busy() then send(3, sid, { rid = d.rid, flags = 1 }) return end
     local spec = { kind = d.rtype, x = d.x, y = d.y }
@@ -2042,7 +2071,8 @@ function R.challenge(player, spec, wager)
   R.cur = { rid = math.random(1, 2 ^ 30), role = 'host', oppSid = player.sid, oppName = player.name, spec = spec, wager = wager, at = clock(), opp = { d = 0, v = 0, at = clock() } }
   R.state = 'invited_out'
   send(1, player.sid, { rid = R.cur.rid, rtype = spec.kind, x = spec.x, y = spec.y, wager = wager })
-  pcall(sendText, player.sid, 'Race you? ' .. R.specName(spec) .. (wager > 0 and (' for ' .. XM.money(wager)) or '') .. '. Open the Race app to accept.')
+  R.cur.inviteMsg = { player.sid, 'Race you? ' .. R.specName(spec) .. (wager > 0 and (' for ' .. XM.money(wager)) or '') .. '. Open the Race app to accept.' }
+  R.cur.resendAt = clock() + 2.5
   return true
 end
 function R.accept()
@@ -2137,6 +2167,18 @@ end
 -- ---------------------------------------------------------------- per-frame
 function R.update(dt)
   local c = R.cur
+  R.pump()
+  if c and R.state == 'invited_out' then
+    if c.inviteMsg and clock() > c.at + 1.2 then pcall(sendText, c.inviteMsg[1], c.inviteMsg[2]) c.inviteMsg = nil end
+    if clock() > (c.resendAt or 0) then
+      c.resendAt = clock() + 2.5
+      push({ kind = 1, to = c.oppSid, rid = c.rid, rtype = c.spec.kind, x = math.floor(c.spec.x), y = math.floor(c.spec.y), wager = c.wager, t = 0, react = 0, d = 0, v = 0, flags = 0 })
+    end
+  elseif c and R.state == 'staging' and c.role == 'guest' and clock() > (c.resendAt or 0) and (c.acceptTries or 0) < 3 then
+    c.acceptTries, c.resendAt = (c.acceptTries or 0) + 1, clock() + 2
+    send(2, c.oppSid)
+  end
+  if c and R.state == 'staging' and clock() - c.at > 600 then refund() reset() return end
   if ac.getSim().isOnlineRace and clock() > (R.lbAt or 0) then R.lbBroadcast() end
   -- expire stale invitations
   if (R.state == 'invited_out' or R.state == 'invited_in') and c and clock() - c.at > 120 then

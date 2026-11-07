@@ -1,12 +1,12 @@
 {
-  "version": "1.4.8",
-  "build": 38,
-  "notes": "Smoother online play: lighter friend livery updates.",
+  "version": "1.4.9",
+  "build": 39,
+  "notes": "Race challenges are now reliable.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 444137
+      "size": 446194
     },
     {
       "path": "manifest.ini",
