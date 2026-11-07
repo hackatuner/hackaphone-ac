@@ -1,12 +1,12 @@
 {
-  "version": "1.4.6",
-  "build": 36,
-  "notes": "Car app: bonnet, boot and doors now open on supported cars.",
+  "version": "1.4.7",
+  "build": 37,
+  "notes": "Fixed the phone jumping on screen.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 442280
+      "size": 443686
     },
     {
       "path": "manifest.ini",

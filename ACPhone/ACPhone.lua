@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.4.6'
-local BUILD = 36
+local VERSION = '1.4.7'
+local BUILD = 37
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -9480,7 +9480,7 @@ end
 
 function script.windowMain(dt)
   local now = clock()
-  if now - lastDraw > 0.3 then
+  if now - lastDraw > 2.0 then      -- only a real close/reopen replays the slide-in, never a frame hitch
     openAnim = 0
     if S.lockScreen and lastDraw > 0 and now - lastDraw > 30 then PHONE.locked = true PHONE.unlock = 0 SHEET.kind = nil end
   end
@@ -9489,6 +9489,7 @@ function script.windowMain(dt)
   local k = clamp(S.phoneScale or 1, 0.6, 1.8)
   if PHONE.appliedScale ~= k or PHONE.appliedMin ~= PHONE.minimized then PHONE.applySize() end
   readInput(dt, k)
+  PHONE.keepPlace()
   if CAM.hidden then endInput() return end      -- taking a photo: draw nothing
   if PHONE.minimized then
     GS.begin(k)
@@ -9589,6 +9590,7 @@ function script.windowMain(dt)
   if IN.clicked and IN.m.y < SCREEN.y + 46 then PHONE.pressAt, PHONE.pressRaw = clock(), ui.mousePos() PHONE.winStart = ui.windowPos() end
   if IN.down and PHONE.pressAt and not PHONE.moving and clock() - PHONE.pressAt > 0.4 and (IN.m - IN.pressPos):length() < 8 and (IN.active == nil or IN.active == 'sb.left' or IN.active == 'sb.right' or IN.active == 'island') then
     PHONE.moving = true
+    PHONE.winStart, PHONE.pressRaw = ui.windowPos(), ui.mousePos()
     IN.active = '__move'
   end
   if PHONE.moving then
@@ -9648,6 +9650,34 @@ function script.windowMain(dt)
 end
 
 -- our own window, for moving it from code
+-- the phone should only ever move when you move it: if the window gets shoved while no button is held
+-- (a layout change, a hitch, a stray drag), put it back where it was
+function PHONE.keepPlace()
+  local wp = ui.windowPos()
+  local now = clock()
+  local held = ui.mouseDown(ui.MouseButton.Left) or ui.mouseDown(ui.MouseButton.Right) or PHONE.moving or PHONE.rightMove or PHONE.resizing
+  local last = PHONE.placeAt
+  if held or PHONE.appliedScale ~= PHONE.placeScale or PHONE.appliedMin ~= PHONE.placeMin or not last or now - (PHONE.placeT or 0) > 1 then
+    PHONE.placeAt, PHONE.placeT = wp, now
+    PHONE.placeScale, PHONE.placeMin = PHONE.appliedScale, PHONE.appliedMin
+    return
+  end
+  local d = wp - last
+  if math.abs(d.x) + math.abs(d.y) > 24 then
+    PHONE.fixes = PHONE.fixes or {}
+    local n = #PHONE.fixes
+    while n > 0 and now - PHONE.fixes[1] > 20 do table.remove(PHONE.fixes, 1) n = n - 1 end
+    if n < 3 then
+      local acc = PHONE.selfWindow()
+      if acc then pcall(acc.move, acc, last) PHONE.fixes[#PHONE.fixes + 1] = now end
+      PHONE.placeT = now
+      return
+    end
+  end
+  -- small drift, or the window keeps getting moved by something else: accept the new spot
+  PHONE.placeT, PHONE.placeAt = now, wp
+end
+
 function PHONE.selfWindow()
   if PHONE.selfAcc and PHONE.selfAcc:valid() then return PHONE.selfAcc end
   if not ac.getAppWindows then return nil end
