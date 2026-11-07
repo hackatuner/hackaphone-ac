@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.3.3'
-local BUILD = 28
+local VERSION = '1.3.4'
+local BUILD = 29
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -1946,7 +1946,8 @@ onEvent = function(sender, d)
   local name = ac.getDriverName(sender.index) or '?'
   local c = R.cur
   if d.kind == 1 then                                         -- invite
-    if R.state ~= 'idle' then send(3, sid, { rid = d.rid, flags = 1 }) return end
+    if R.state == 'finished' or (R.state == 'idle' and R.run and not R.busy()) then reset() end   -- stale result or armed solo pull
+    if R.state ~= 'idle' or R.busy() then send(3, sid, { rid = d.rid, flags = 1 }) return end
     local spec = { kind = d.rtype, x = d.x, y = d.y }
     R.cur = { rid = d.rid, role = 'guest', oppSid = sid, oppName = name, spec = spec, wager = d.wager, at = clock(), opp = { d = 0, v = 0, at = clock() } }
     R.state = 'invited_in'
@@ -2034,6 +2035,7 @@ end
 
 -- ---------------------------------------------------------------- actions
 function R.challenge(player, spec, wager)
+  if R.state == 'finished' or (R.state == 'idle' and R.run and not R.busy()) then reset() end
   if R.state ~= 'idle' or R.busy() then return false end
   wager = math.max(0, math.floor(wager or 0))
   if wager > XM.cash() then toast('Not enough cash', 'Lower the wager', '⚠️') return false end
@@ -2137,7 +2139,7 @@ function R.update(dt)
   local c = R.cur
   if ac.getSim().isOnlineRace and clock() > (R.lbAt or 0) then R.lbBroadcast() end
   -- expire stale invitations
-  if (R.state == 'invited_out' or R.state == 'invited_in') and c and clock() - c.at > 60 then
+  if (R.state == 'invited_out' or R.state == 'invited_in') and c and clock() - c.at > 120 then
     if R.state == 'invited_out' then send(4, c.oppSid) end
     toast('Race invite expired', c.oppName, '🏁')
     reset()
@@ -7472,6 +7474,7 @@ function APPMOD.Race.root()
     local y = largeTitle('Race', 96, s.y)
     local ac1 = accent()
     text(string.format('%dW  %dL  ·  streak %d', S.raceWins, S.raceLosses, S.raceStreak), 13, SW - 16, y - 14, GOLD, F.numb, 1)
+    if R.cur and (R.state == 'invited_in' or R.state == 'invited_out' or R.state == 'staging') then tab = 1 end   -- an open race is always on the first tab
     tab = W.segmented('rc.tab', { 'Race', 'Solo', 'Records', 'Board' }, tab, 16, y, SW - 32)
     y = y + 46
 
@@ -8499,6 +8502,28 @@ local function statusGestures()
   end
 end
 
+-- an incoming race invite is shown on top of everything, on any screen, so it can always be accepted
+function PHONE.raceInviteOn()
+  local R = XM.race
+  return R.state == 'invited_in' and R.cur ~= nil and not R.busy()
+end
+function PHONE.raceInvite()
+  local R, c = XM.race, XM.race.cur
+  local x1, y1, x2, y2 = 12, 56, SW - 12, 152
+  local ac1 = accent()
+  rect(x1, y1, x2, y2, rgbm(0.07, 0.07, 0.09, 0.97), 24)
+  rectLine(x1, y1, x2, y2, A(ac1, 0.9), 24, 2)
+  avatar(c.oppName, x1 + 14, y1 + 12, 44)
+  textFit('🏁 ' .. c.oppName .. ' wants to race you', 14, x1 + 68, y1 + 14, x2 - x1 - 80, T.white, F.b)
+  textFit(R.specName(c.spec) .. (c.wager > 0 and ('  ·  for ' .. XM.money(c.wager)) or ''), 12, x1 + 68, y1 + 36, x2 - x1 - 80, T.label2, F.m)
+  local bw = (x2 - x1 - 36) / 2
+  if W.button('ri.acc', 'Accept', x1 + 14, y1 + 58, bw, 30, 'filled') then
+    R.accept()
+    if APPMOD.openApp then APPMOD.openApp('race') end
+  end
+  if W.button('ri.dec', 'Decline', x1 + 22 + bw, y1 + 58, bw, 30, 'danger') then R.decline() end
+end
+
 local function banners()
   local y0 = 52
   for i = #BANNERS, 1, -1 do
@@ -9075,14 +9100,16 @@ function script.windowMain(dt)
   -- screen
   D.x, D.y = SCREEN.x, SCREEN.y + 60 * (1 - e)
   local baseX, baseY = D.x, D.y
+  local inviteUp = PHONE.raceInviteOn()
+  local inviteHit = inviteUp and hit(12, 56, SW - 12, 152)
   if PHONE.locked then
-    IN.locked = openAnim < 1 or SHEET.kind ~= nil
+    IN.locked = openAnim < 1 or SHEET.kind ~= nil or inviteHit
     lockScreen()
     if not PHONE.locked and not IN.locked then IN.active = '__unlocked' end
   else
     IN.locked = IN.locked or SHEET.kind ~= nil
     -- the expanded music/lap card sits over the widgets: while it's open, touches inside it belong to it only
-    if LIVE.expanded > 0.02 and hit(14, 10, SW - 14, 134) then IN.locked = true end
+    if (LIVE.expanded > 0.02 and hit(14, 10, SW - 14, 134)) or inviteHit then IN.locked = true end
     compose()
   end
   XM.welcome.drawPhone()
@@ -9093,6 +9120,7 @@ function script.windowMain(dt)
   statusBar(false)
   statusGestures()
   banners()
+  if PHONE.raceInviteOn() then PHONE.raceInvite() end
 
   -- home indicator: tap or swipe up to go home
   local hy = SH - 12
