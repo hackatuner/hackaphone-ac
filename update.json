@@ -1,12 +1,12 @@
 {
-  "version": "1.4.0",
-  "build": 30,
-  "notes": "1.4.0: new Cam Editor app (cockpit seat, FOV, drivable views, every F6 camera).",
+  "version": "1.4.1",
+  "build": 31,
+  "notes": "1.4.1: Cam Editor now edits Chase, Chase 2, Bonnet, Bumper and Dash cameras (position, angle, tilt, FOV) per car.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 430111
+      "size": 435616
     },
     {
       "path": "manifest.ini",

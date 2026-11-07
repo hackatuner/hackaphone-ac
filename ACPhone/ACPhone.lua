@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.4.0'
-local BUILD = 30
+local VERSION = '1.4.1'
+local BUILD = 31
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -93,7 +93,7 @@ local S = ac.storage({
   liveryPresets = '[]',
   skinFavs = '',
   hesiOn = true,
-  homeLayout = '', raceLB = '',
+  homeLayout = '', raceLB = '', camTweaks = '',
   carHeadOn = false, carHeadCol = 1, carHeadPow = 1.0, carTailOn = false, carTailCol = 3, carTailPow = 1.0,
   hesiPB = 0,
   hesiTotal = 0,
@@ -2761,6 +2761,24 @@ local function updateChase(dt)
   setTransform(pos, fwd, up, CAM.chaseFov)
 end
 
+-- ---------------------------------------------------------------- camera editor override
+-- places the camera relative to the car using the offsets saved in the Cam Editor (per view, per car)
+local function updateTweak(dt)
+  local e = XM.cam and XM.cam.current()
+  if not e then return end
+  local sim = ac.getSim()
+  local car = ac.getCar(sim.focusedCar >= 0 and sim.focusedCar or 0)
+  if not car then return end
+  local look, up, side = car.look, car.up, car.side
+  local yaw, pit, rol = math.rad(e.yaw or 0), math.rad(e.pitch or 0), math.rad(e.roll or 0)
+  local fx, fy, fz = math.sin(yaw) * math.cos(pit), math.sin(pit), math.cos(yaw) * math.cos(pit)
+  local fwd = (side * fx + up * fy + look * fz):normalize()
+  local upv = (up - fwd * up:dot(fwd)):normalize()
+  upv = upv * math.cos(rol) + fwd:clone():cross(upv) * math.sin(rol)
+  local pos = car.position + side * (e.x or 0) + up * (e.y or 0) + look * (e.z or 0)
+  setTransform(pos, fwd, upv, e.fov or 60)
+end
+
 -- ---------------------------------------------------------------- frame hook
 function script.camUpdate()
   local now = clock()
@@ -2777,15 +2795,24 @@ function script.camUpdate()
     camRelease()
   end
 
+  -- Cam Editor: custom placement for the view you are driving in
+  local wantTweak = not wantChase and XM.cam ~= nil and XM.cam.current() ~= nil
+  if wantTweak and not CAM.mode then camGrab('tweak')
+  elseif CAM.mode == 'tweak' and not wantTweak then
+    if CAM.grab then CAM.grab.ownShare = 0 end
+    camRelease()
+  end
+
   if not CAM.grab then return end
   if not CAM.grab:active() then CAM.grab, CAM.mode = nil, nil return end
-  CAM.share = damp(CAM.share, 1, CAM.mode == 'chase' and 30 or 6, dt)
+  CAM.share = damp(CAM.share, 1, (CAM.mode == 'chase' or CAM.mode == 'tweak') and 30 or 6, dt)
   CAM.grab.ownShare = CAM.share
   local ok, err = pcall(function()
     if CAM.mode == 'photo' then updatePhoto(dt)
     elseif CAM.mode == 'walk' then updateWalk(dt)
     elseif CAM.mode == 'video' then updateVideo(dt)
-    elseif CAM.mode == 'chase' then updateChase(dt) end
+    elseif CAM.mode == 'chase' then updateChase(dt)
+    elseif CAM.mode == 'tweak' then updateTweak(dt) end
   end)
   if not ok then ac.log('HackaPhone camera error: ' .. tostring(err)) end
 end
@@ -7922,6 +7949,50 @@ local function seatSet(pos, pitch, yaw)
   pcall(function() ac.setOnboardCameraParams(0, ac.SeatParams(pos, pitch, yaw), true) end)
 end
 
+
+-- ---- custom view placement (drives the camera hook in 3_camera.lua)
+K.VIEWS = {
+  { key = 'chase',  name = 'Chase',   mode = 2, sub = 0, def = { x = 0, y = 1.9, z = -6.2, yaw = 0, pitch = -7, roll = 0, fov = 60 } },
+  { key = 'chase2', name = 'Chase 2', mode = 2, sub = 1, def = { x = 0, y = 3.0, z = -8.5, yaw = 0, pitch = -10, roll = 0, fov = 60 } },
+  { key = 'bonnet', name = 'Bonnet',  mode = 2, sub = 2, def = { x = 0, y = 1.15, z = 0.9, yaw = 0, pitch = 0, roll = 0, fov = 65 } },
+  { key = 'bumper', name = 'Bumper',  mode = 2, sub = 3, def = { x = 0, y = 0.55, z = 2.3, yaw = 0, pitch = 0, roll = 0, fov = 70 } },
+  { key = 'dash',   name = 'Dash',    mode = 2, sub = 4, def = { x = 0, y = 1.0, z = 0.35, yaw = 0, pitch = 0, roll = 0, fov = 62 } },
+}
+function K.activeView()
+  local sm = ac.getSim()
+  if sm.cameraMode ~= 2 then return nil end
+  for _, v in ipairs(K.VIEWS) do if v.sub == sm.driveableCameraMode then return v end end
+end
+local function entryKey(v) return v.key .. '|' .. (ac.getCarID and ac.getCarID(0) or 'car') end
+function K.entry(v) return XM.jget('camTweaks', {})[entryKey(v)] end
+function K.save(v, e) local t = XM.jget('camTweaks', {}) t[entryKey(v)] = e XM.jset('camTweaks', t) end
+-- the entry in force right now: only for the view you're in, only when it's switched on
+function K.current()
+  local v = K.activeView()
+  if not v then return nil end
+  local e = K.entry(v)
+  if e and e.on then return e end
+end
+-- take the live AC camera as the starting point
+function K.capture(v)
+  local sm = ac.getSim()
+  local car = ac.getCar(sm.focusedCar >= 0 and sm.focusedCar or 0)
+  local e = {}
+  for k, val in pairs(v.def) do e[k] = val end
+  if car and sm.cameraPosition and sm.cameraLook and not (K.live) then
+    local d = sm.cameraPosition - car.position
+    local l = sm.cameraLook
+    e.x, e.y, e.z = d:dot(car.side), d:dot(car.up), d:dot(car.look)
+    e.yaw = math.deg(math.atan2(l:dot(car.side), l:dot(car.look)))
+    e.pitch = math.deg(math.asin(clamp(l:dot(car.up), -1, 1)))
+    e.roll = 0
+    local f = ac.getCameraFOV and ac.getCameraFOV() or 60
+    if f and f > 5 and f < 150 then e.fov = f end
+  end
+  e.on = false
+  return e
+end
+
 function K.goCockpit() pcall(ac.setCurrentCamera, 0) end
 function K.goDrivable(i) pcall(ac.setCurrentCamera, 2) pcall(ac.setCurrentDrivableCamera, i) end
 function K.goF6(i) pcall(ac.setCurrentCamera, 1) pcall(ac.setCurrentCarCamera, i) end
@@ -8005,7 +8076,49 @@ function APPMOD.CamEdit.root()
         if fired then v[3]() end
       end
       y = y + 3 * (gh + 10) + 6
-      y = W.sectionFooter('Tap a view to switch to it straight away. The cockpit tab edits your seat; the F6 tab edits the fixed car cameras.', y)
+      -- editor for the view you are in right now
+      local av = K.activeView()
+      if av then
+        y = W.sectionHeader('Edit ' .. av.name, y)
+        local e = K.entry(av)
+        card(y, 56)
+        text('Custom ' .. av.name .. ' camera', 15, LIST.x + 16, y + 18, T.white, F.sb)
+        local on = e and e.on or false
+        local non = W.toggle('ce.on', on, LIST.x + LIST.w - 62, y + 14)
+        if non ~= on then
+          if not e then e = K.capture(av) end
+          e.on = non
+          K.save(av, e)
+        end
+        y = y + 68
+        if e and e.on then
+          local ch
+          local function row(id, label, field, lo, hi, fmt)
+            local nv, c = dial(id, label, e[field], lo, hi, fmt, y)
+            if c then e[field] = nv ch = true end
+            y = y + 88
+          end
+          row('ce.cx', 'Left / right', 'x', -3, 3, '%.2f m')
+          row('ce.cy', 'Height', 'y', -0.5, 5, '%.2f m')
+          row('ce.cz', 'Distance (forward / back)', 'z', -14, 5, '%.2f m')
+          row('ce.cyaw', 'Look left / right', 'yaw', -90, 90, '%.0f°')
+          row('ce.cpit', 'Look up / down', 'pitch', -45, 45, '%.1f°')
+          row('ce.croll', 'Tilt', 'roll', -30, 30, '%.1f°')
+          row('ce.cfov', 'Field of view', 'fov', 20, 120, '%.0f°')
+          if ch then K.save(av, e) end
+          local bw = (SW - 40) / 2
+          if W.button('ce.cap', 'Reset (back to AC)', 16, y, bw, 44, 'gray') then
+            K.save(av, nil)
+          end
+          if W.button('ce.def', 'Standard preset', 24 + bw, y, bw, 44, 'gray') then
+            local d2 = {} for k2, v2 in pairs(av.def) do d2[k2] = v2 end d2.on = true K.save(av, d2)
+          end
+          y = y + 56
+        end
+        y = W.sectionFooter('Turn it on and the camera is yours to place, relative to the car. It starts from where the camera is right now. Settings are saved per car and per view.', y)
+      else
+        y = W.sectionFooter('Switch to Chase, Chase 2, Bonnet, Bumper or Dash to edit that camera. The cockpit tab edits your seat; the F6 tab edits the fixed car cameras.', y)
+      end
     else
       local car = ac.getCar(0)
       local n = car and car.carCamerasCount or 0
