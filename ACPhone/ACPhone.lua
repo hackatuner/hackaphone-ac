@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.5.2'
-local BUILD = 42
+local VERSION = '1.5.3'
+local BUILD = 43
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -1034,7 +1034,7 @@ local sendPresence = ac.OnlineEvent({
 end)
 
 local function broadcastPresence()
-  pcall(sendPresence, { status = utf8Trim(S.status, 40) }, true)
+  pcall(sendPresence, { status = utf8Trim(S.status, 40) })
 end
 
 local lastSend = -10
@@ -1109,7 +1109,10 @@ local plateEvent = ac.OnlineEvent({
   hackaPlateCountry = ac.StructItem.string(16),
 }, function(sender, msg)
   if not sender or sender.index == 0 then return end
-  PL.others[sender.index] = { text = tostring(msg.hackaPlateText), country = tostring(msg.hackaPlateCountry) }
+  local t, c = tostring(msg.hackaPlateText), tostring(msg.hackaPlateCountry)
+  local old = PL.others[sender.index]
+  if old and old.text == t and old.country == c then return end   -- same plate again: nothing to redo
+  PL.others[sender.index] = { text = t, country = c }
   PL.applied[sender.index] = nil
 end)
 
@@ -1662,8 +1665,9 @@ local function send(d)
   d.kind = d.kind or 0
   d.to, d.id, d.item, d.qty, d.price = d.to or 0, d.id or 0, d.item or 0, d.qty or 0, d.price or 0
   d.wealth = math.floor(math.min(XM.netWorth(), 2100000000))
-  pcall(ecoSend, d, true)
+  pcall(ecoSend, d)
 end
+XM.ecoBeacon = function() send({ kind = 0 }) end
 
 ecoSend = ac.OnlineEvent({
   ac.StructItem.key('acphone.eco.v1'),
@@ -2411,7 +2415,7 @@ if ac.onClientConnected then
       local name = ac.getDriverName(carIndex) or 'Someone'
       local fav = listHas(S.favorites, name)
       notify(name .. ' joined', (ac.getCarName(carIndex) or '') .. (fav and ' ⭐' or ''), '👋', nil, { quietWhenClosed = not fav })
-      if PL.text ~= '' then PL.broadcast() end
+      if XM.beaconSoon then XM.beaconSoon() end
       XM.greet(name, sessionID)
     end, 3)
   end)
@@ -3170,10 +3174,10 @@ local function broadcast(evt, last)
     pb = math.floor(S.hesiPB), mult = math.floor(HESI.mult * 10), state = HESI.running and 1 or 0,
     evt = evt or 0, last = math.floor(last or 0), crashes = HESI.crashes, seq = HESI.seq,
   }
-  pcall(hesiSend, data, true)
+  pcall(hesiSend, data)
   if evt and evt ~= 0 then
     -- crash/bank results are what the boards reshuffle on, so send them twice in case one is dropped
-    setTimeout(function() pcall(hesiSend, data, true) end, 0.7)
+    setTimeout(function() pcall(hesiSend, data) end, 0.7)
   end
 end
 
@@ -3248,9 +3252,13 @@ hesiSend = ac.OnlineEvent({
   HESI.board[sender.sessionID] = { name = name, run = d.run, best = d.best, total = d.total, pb = d.pb, mult = d.mult / 10,
     running = d.state == 1, at = clock(), index = sender.index, ev = ev, evSeq = (d.evt ~= 0) and d.seq or (prev and prev.evSeq), crashes = d.crashes }
   -- crew all-time board (kept on this PC)
-  local ok, crew = pcall(JSON.parse, S.hesiCrew)
-  crew = (ok and type(crew) == 'table') and crew or {}
-  if (crew[name] or 0) < d.pb then crew[name] = d.pb S.hesiCrew = JSON.stringify(crew) end
+  if (HESI.crewSeen or {})[name] ~= d.pb then
+    HESI.crewSeen = HESI.crewSeen or {}
+    HESI.crewSeen[name] = d.pb
+    local ok, crew = pcall(JSON.parse, S.hesiCrew)
+    crew = (ok and type(crew) == 'table') and crew or {}
+    if (crew[name] or 0) < d.pb then crew[name] = d.pb S.hesiCrew = JSON.stringify(crew) end
+  end
   if prev and d.best > (prev.best or 0) and d.best > 5000 and d.best >= HESI.sessionBest then
     notify(name .. ' set the top run 🔥', fmtPts(d.best) .. ' points', '🔥', nil, { quietWhenClosed = true })
   end
@@ -3340,7 +3348,7 @@ local function hesiUpdate(dt)
   end
 
   -- share live state every couple of seconds
-  if clock() > HESI.sendAt then HESI.sendAt = clock() + 1 broadcast() end
+  if clock() > HESI.sendAt then HESI.sendAt = clock() + (HESI.running and 1.5 or 25) broadcast() end
 end
 HESI.update = hesiUpdate
 
@@ -5646,7 +5654,7 @@ local function lvDrain()
 end
 
 local function lvBroadcast()
-  if S.liverySync then pcall(liveryEvent, { data = lvPack(LV.cfg) }, true) end
+  if S.liverySync then pcall(liveryEvent, { data = lvPack(LV.cfg) }) end
 end
 
 local function lvCommit()
@@ -5906,7 +5914,7 @@ LIVERY_API.tick = function(dt)
   if LV.dt_ > 0.5 then LV.dt_ = 0 lvDrain() end
   if LV.bt > 45 then
     LV.bt = 0
-    if LV.cfg.on and ac.getSim().isOnlineRace then lvBroadcast() end
+    -- (livery goes out with the phone's periodic hello and on changes)
   end
 end
 LIVERY_API.unpack, LIVERY_API.pack = lvUnpack, lvPack
@@ -8439,7 +8447,7 @@ local verEvent = ac.OnlineEvent({
   pcall(U.note, ac.getDriverName(sender.index), tostring(d.ver), d.build)
 end)
 -- announce my version once; the game re-sends it to anyone who joins later
-function U.announce() pcall(verEvent, { ver = VERSION, build = BUILD }, true) end
+function U.announce() pcall(verEvent, { ver = VERSION, build = BUILD }) end
 -- anyone sending presence is running the app (older versions don't announce a version)
 function U.tick(dt)
   U.t = (U.t or 0) + dt
@@ -9987,7 +9995,27 @@ end
 -- Background work
 -- ===========================================================================
 
+-- one small, spread-out hello (status, version, plate, livery, wealth) instead of everyone answering a join at once
+function PHONE.beacon()
+  if not ac.getSim().isOnlineRace then return end
+  local steps = { broadcastPresence, XM.users.announce, XM.ecoBeacon, PL.broadcast, LIVERY_API.broadcast }
+  for i, fn in ipairs(steps) do
+    setTimeout(function() pcall(fn) end, (i - 1) * 0.6)
+  end
+end
+function PHONE.beaconSoon()
+  if PHONE.beaconQueued then return end
+  PHONE.beaconQueued = true
+  setTimeout(function() PHONE.beaconQueued = false PHONE.beacon() end, 3 + math.random() * 9)
+end
+XM.beaconSoon = PHONE.beaconSoon
+function PHONE.beaconTick(dt)
+  PHONE.beaconT = (PHONE.beaconT or (40 + math.random() * 30)) - dt
+  if PHONE.beaconT <= 0 then PHONE.beaconT = 90 + math.random() * 30 PHONE.beacon() end
+end
+
 function script.update(dt)
+  pcall(PHONE.beaconTick, dt)
   if not SHEET.started then
     SHEET.started = true
     pcall(LIVERY_API.selfTest)

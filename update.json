@@ -1,12 +1,12 @@
 {
-  "version": "1.5.2",
-  "build": 42,
-  "notes": "Friends app: list of HackaPhone users you've met.",
+  "version": "1.5.3",
+  "build": 43,
+  "notes": "Smoother online play when players join.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 450663
+      "size": 451841
     },
     {
       "path": "manifest.ini",
