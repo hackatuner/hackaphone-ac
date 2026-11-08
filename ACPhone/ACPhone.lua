@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.5.3'
-local BUILD = 43
+local VERSION = '1.5.4'
+local BUILD = 44
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -129,7 +129,7 @@ local S = ac.storage({
   chaseTilt = 0.5,
   -- camera
   camFov = 50,
-  camHideApps = true,
+  camHideApps = true, recApp = 1,
   -- plates
   plateData = '{}',
   plateAutoApply = true,
@@ -3597,6 +3597,23 @@ local function tapKey(vk)
   return true
 end
 
+-- hold some keys together, press the last one, then let go (for recorder hotkeys)
+function MEDIA.combo(keys)
+  if not ac.sendKeyboardButtonEvent then return false end
+  for _, k in ipairs(keys) do if not pcall(ac.sendKeyboardButtonEvent, k, true) then return false end end
+  setTimeout(function()
+    for i = #keys, 1, -1 do pcall(ac.sendKeyboardButtonEvent, keys[i], false) end
+  end, 0.08)
+  return true
+end
+-- 1 = NVIDIA ShadowPlay (Alt+F9 toggles), 2 = OBS (Ctrl+Alt+F9 start, Ctrl+Alt+F10 stop), 3 = off
+function MEDIA.recorder(start)
+  local mode = S.recApp or 1
+  if mode == 1 then return MEDIA.combo({ 18, 120 }) end
+  if mode == 2 then return MEDIA.combo({ 17, 18, start and 120 or 121 }) end
+  return false
+end
+
 local function guard()
   if clock() - MEDIA.lastSend < 0.25 then return false end
   MEDIA.lastSend = clock()
@@ -4265,7 +4282,13 @@ function APPMOD.Video.root()
     y = y + 8
     W.groupBg(y, 1)
     S.camHideApps = W.toggleRow('vhide', 'Hide other apps while filming', S.camHideApps, y, { last = true, first = true })
-    y = W.sectionFooter('AC can’t encode video itself. Press REC here, then start OBS or NVIDIA ShadowPlay (Alt+F9) to capture in 4K.', y + 46)
+    y = W.sectionHeader('Record with', y + 54)
+    S.recApp = W.segmented('v.recapp', { 'ShadowPlay', 'OBS', 'Off' }, S.recApp or 1, 16, y, SW - 32)
+    y = y + 50
+    y = W.sectionFooter(({
+      'REC starts and Stop ends NVIDIA recording for you (Alt+F9). Turn on Instant Replay / recording in the NVIDIA overlay first.',
+      'REC and Stop press Ctrl+Alt+F9 and Ctrl+Alt+F10. In OBS open Settings › Hotkeys and set Start Recording to Ctrl+Alt+F9 and Stop Recording to Ctrl+Alt+F10.',
+      'AC can’t encode video itself. Press REC, then start your own recorder.' })[S.recApp or 1], y)
     scrollEnd(s, y + 10)
     navBar('Video', { large = true }, s.y)
     -- bottom bar: preview + record
@@ -4281,6 +4304,14 @@ function APPMOD.Video.root()
       CAM.recStart = clock()
       if S.camHideApps then hideOtherApps(true) end
       setMinimized(true, 'rec')
+      if (S.recApp or 1) ~= 3 then
+        setTimeout(function()
+          if CAM.recording then
+            CAM.recOn = MEDIA.recorder(true)
+            if not CAM.recOn then toast('Couldn’t start your recorder', 'Press its record hotkey yourself', '⚠️') end
+          end
+        end, 0.8)
+      end
     end
     text('REC', 12, SW / 2, by + 82, T.label2, F.sb, 0.5)
   end
@@ -9597,7 +9628,13 @@ local function capsule()
       hideOtherApps(false)
       camRelease()
       setMinimized(false)
-      toast('Recording stopped', 'Stop your OBS / ShadowPlay capture too', '🎬')
+      if CAM.recOn then
+        CAM.recOn = false
+        pcall(MEDIA.recorder, false)
+        toast('Recording stopped', 'Your video is saved by ' .. ((S.recApp or 1) == 2 and 'OBS' or 'NVIDIA'), '🎬')
+      else
+        toast('Recording stopped', 'Stop your OBS / ShadowPlay capture too', '🎬')
+      end
     end
   else
     if W.button('cap.expand', '⤢', 24, 28, 44, 40, 'gray') then setMinimized(false) end

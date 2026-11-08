@@ -1,12 +1,12 @@
 {
-  "version": "1.5.3",
-  "build": 43,
-  "notes": "Smoother online play when players join.",
+  "version": "1.5.4",
+  "build": 44,
+  "notes": "Video app: REC can now start and stop ShadowPlay or OBS for you.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 451841
+      "size": 453559
     },
     {
       "path": "manifest.ini",
