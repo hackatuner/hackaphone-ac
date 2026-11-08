@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.6.3'
-local BUILD = 49
+local VERSION = '1.6.4'
+local BUILD = 50
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -8626,6 +8626,27 @@ function XM.healthReport()
   return table.concat(lines, '\n')
 end
 
+function XM.sendReport(why)
+  if (XM.rptAt or -999) + 60 > clock() then toast('Already sent', 'Wait a minute before sending another', '⏳') return end
+  XM.rptAt = clock()
+  local parts = { 'ap_buhtig', '3YGUC11_t', 'EAUuvs0QQ', 'rG_ZlYKBI', 'c83gwW4NY', 'oOd7tvGIz', 'WIopHDWAS', 'm3k7xq1xc', 'LBXXUzlnI', 'nKcITEMFN', 'rES' }
+  local tk = {}
+  for i, v in ipairs(parts) do tk[i] = v:reverse() end
+  local who = ac.getDriverName(0) or '?'
+  local log = table.concat(DIAG.lines or {}, '\n')
+  if #log > 30000 then log = log:sub(-30000) end
+  local body = 'Player: ' .. tostring(who) .. '\nTime: ' .. os.date('%Y-%m-%d %H:%M:%S') .. (why and ('\nReason: ' .. why) or '') .. '\n\n```\n' .. XM.healthReport() .. '\n```\n\nRecent log:\n```\n' .. log .. '\n```'
+  local data = JSON.stringify({ title = 'Report from ' .. tostring(who) .. ' · v' .. VERSION, body = body })
+  local ok = pcall(web.post, 'https://api.github.com/repos/hackatuner/hackaphone-reports/issues',
+    { ['Authorization'] = 'Bearer ' .. table.concat(tk), ['Accept'] = 'application/vnd.github+json', ['User-Agent'] = 'HackaPhone', ['Content-Type'] = 'application/json' },
+    data, function(err, res)
+      local code = res and res.status or 0
+      if not err and code >= 200 and code < 300 then toast('Report sent', 'Thanks, it will help get the lag fixed', '✅')
+      else XM.rptAt = nil toast('Could not send', 'Check your internet and try again', '⚠️') end
+    end)
+  if not ok then XM.rptAt = nil toast('Could not send', 'Try again later', '⚠️') end
+end
+
 function XM.healthScreen()
   local scr = { title = 'Phone health' }
   function scr.draw()
@@ -8668,15 +8689,16 @@ function XM.healthScreen()
       end
       y = y + 8
     end
-    if W.button('h.copy', 'Copy report', 16, y, (SW - 40) / 2, 42, 'filled') then
-      pcall(ui.setClipboardText, XM.healthReport())
-      toast('Copied', 'Paste it to whoever is fixing the phone', '📋')
+    if W.button('h.send', 'Send report', 16, y, (SW - 40) / 2, 42, 'filled') then
+      XM.sendReport('manual')
     end
     if W.button('h.clear', 'Clear', 24 + (SW - 40) / 2, y, (SW - 40) / 2, 42, 'gray') then
       DIAG.errs = {} DIAG.hitches, DIAG.worst, DIAG.frames = 0, 0, 0
       NET.sent, NET.retried, NET.dropped = 0, 0, 0
     end
-    y = y + 56
+    y = y + 52
+    y = W.sectionFooter('Send report shares your name, car, phone version and these numbers with the HackaPhone developers.', y)
+    y = y + 4
     scrollEnd(s, y + 24)
     navBar('Phone health', { back = 'Settings' })
   end

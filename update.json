@@ -1,12 +1,12 @@
 {
-  "version": "1.6.3",
-  "build": 49,
-  "notes": "Fixed a lag spike when friends' liveries load.",
+  "version": "1.6.4",
+  "build": 50,
+  "notes": "Phone health now has a Send report button so lag reports reach the developers.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 464361
+      "size": 465947
     },
     {
       "path": "manifest.ini",
