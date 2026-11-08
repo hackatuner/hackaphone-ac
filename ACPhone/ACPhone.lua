@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.6.1'
-local BUILD = 47
+local VERSION = '1.6.2'
+local BUILD = 48
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -883,7 +883,31 @@ function DIAG.time(name, fn, a)
   if d > (DIAG.peak[name] or 0) then DIAG.peak[name] = d end
   if not ok then DIAG.err(name, e) end
 end
+-- A running log written to health_log.txt next to the phone, so a problem can be read afterwards without copy-pasting.
+-- It stays on this PC; nothing is sent anywhere.
+DIAG.lines, DIAG.marks, DIAG.dirty, DIAG.flushAt = {}, {}, false, 0
+function DIAG.note(text)
+  local l = DIAG.lines
+  l[#l + 1] = os.date('%H:%M:%S') .. '  ' .. text
+  while #l > 250 do table.remove(l, 1) end
+  DIAG.dirty = true
+end
+function DIAG.mark(text)   -- remember what just happened, to explain the next hitch
+  local m = DIAG.marks
+  m[#m + 1] = { t = clock(), text = text }
+  while #m > 6 do table.remove(m, 1) end
+end
+function DIAG.flush(force)
+  if not DIAG.dirty or (not force and clock() < DIAG.flushAt) then return end
+  DIAG.flushAt = clock() + 20
+  DIAG.dirty = false
+  pcall(function()
+    local f = ac.getFolder(ac.FolderID.ScriptOrigin) .. '/health_log.txt'
+    io.save(f, 'HackaPhone ' .. VERSION .. ' build ' .. BUILD .. '\n' .. table.concat(DIAG.lines, '\n') .. '\n', true)
+  end)
+end
 function DIAG.err(tag, e)
+  DIAG.note('ERROR [' .. tag .. '] ' .. tostring(e):gsub('%s+', ' '):sub(1, 160))
   local list = DIAG.errs
   local msg = tostring(e):gsub('%s+', ' '):sub(1, 140)
   for _, it in ipairs(list) do if it.tag == tag and it.msg == msg then it.n = it.n + 1 it.at = os.time() return end end
@@ -2444,6 +2468,7 @@ end
 
 if ac.onClientConnected then
   ac.onClientConnected(function(carIndex, sessionID)
+    DIAG.mark('player joined')
     setTimeout(function()
       local name = ac.getDriverName(carIndex) or 'Someone'
       local fav = listHas(S.favorites, name)
@@ -3216,6 +3241,7 @@ end
 
 local function endRun(crashed)
   if not HESI.running then return end
+  DIAG.mark(crashed and 'my crash' or 'my run banked')
   local fx = HESI.pw or {}
   local saved = false
   if (not crashed) and fx.hunter and HESI.run > S.hesiPB then
@@ -10188,7 +10214,25 @@ end
 function script.update(dt)
   NET.tick()
   DIAG.frames = DIAG.frames + 1
-  if dt > 0.1 then DIAG.hitches = DIAG.hitches + 1 end
+  if dt > 0.1 then
+    DIAG.hitches = DIAG.hitches + 1
+    local why = {}
+    for _, m in ipairs(DIAG.marks) do if clock() - m.t < 4 then why[#why + 1] = m.text end end
+    DIAG.note(string.format('HITCH %d ms · online %s · cars %d · queue %d · after: %s', dt * 1000, tostring(ac.getSim().isOnlineRace), ac.getSim().carsCount, #NET.q, #why > 0 and table.concat(why, ', ') or 'nothing noted'))
+  end
+  DIAG.snapT = (DIAG.snapT or 0) + dt
+  if DIAG.snapT > 60 then
+    DIAG.snapT = 0
+    if ac.getSim().isOnlineRace then
+      local names = {}
+      for k in pairs(DIAG.cost) do names[#names + 1] = k end
+      table.sort(names, function(a, b) return DIAG.cost[a] > DIAG.cost[b] end)
+      local top = {}
+      for i = 1, math.min(3, #names) do top[#top + 1] = string.format('%s %.2fms', names[i], DIAG.cost[names[i]] * 1000) end
+      DIAG.note(string.format('online · cars %d · net sent %d retried %d dropped %d queued %d · %s · mem %.1f MB', ac.getSim().carsCount, NET.sent, NET.retried, NET.dropped, #NET.q, table.concat(top, ', '), XM.memMB()))
+    end
+  end
+  DIAG.flush()
   if dt > DIAG.worst then DIAG.worst = dt end
   do local ok, e = pcall(PHONE.beaconTick, dt) if not ok then DIAG.err('beacon', e) end end
   if not SHEET.started then

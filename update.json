@@ -1,12 +1,12 @@
 {
-  "version": "1.6.1",
-  "build": 47,
-  "notes": "Smoother crashes: less work at the moment of impact, quieter crash alerts, lighter traffic scan.",
+  "version": "1.6.2",
+  "build": 48,
+  "notes": "Improvements and fixes.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 462004
+      "size": 464180
     },
     {
       "path": "manifest.ini",
