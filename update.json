@@ -1,12 +1,12 @@
 {
-  "version": "1.6.2",
-  "build": 48,
-  "notes": "Improvements and fixes.",
+  "version": "1.6.3",
+  "build": 49,
+  "notes": "Fixed a lag spike when friends' liveries load.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 464180
+      "size": 464361
     },
     {
       "path": "manifest.ini",

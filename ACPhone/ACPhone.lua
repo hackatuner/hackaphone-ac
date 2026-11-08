@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.6.2'
-local BUILD = 48
+local VERSION = '1.6.3'
+local BUILD = 49
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -5638,10 +5638,11 @@ local function lvValues(cfg)
 end
 
 -- renders cfg into a DDS file; returns its path or nil
-local function lvRenderTexture(cfg, tag)
+local function lvRenderTexture(cfg, tag, res)
   if not (ui.ExtraCanvas and LV.shaderOK ~= false) then return nil end
   local ok, path = pcall(function()
-    local canvas = ui.ExtraCanvas(vec2(LV.res, LV.res), 12)
+    local rs = res or LV.res
+    local canvas = ui.ExtraCanvas(vec2(rs, rs), 12)
     canvas:clear(col(cfg.c1))
     canvas:updateWithShader({ values = lvValues(cfg), shader = LV_SHADER, cacheKey = 7 })
     pcall(function() canvas:mipsUpdate() end)
@@ -5686,7 +5687,8 @@ local function lvApply(index, cfg)
   if not cfg or not cfg.on then return 0 end
   local count = 0
   local body = lvMeshes(index, 'body')
-  local tex = #body > 0 and lvRenderTexture(cfg, 'car' .. index) or nil
+  -- your own car gets the full 4K paint; other people's cars use 1K, which is ~16x cheaper and still looks right in a race
+  local tex = #body > 0 and lvRenderTexture(cfg, 'car' .. index, index == 0 and LV.res or 1024) or nil
   for _, m in ipairs(body) do
     count = count + 1
     pcall(function()
@@ -6024,7 +6026,7 @@ LIVERY_API.broadcast = lvBroadcast
 LIVERY_API.tick = function(dt)
   LV.bt = (LV.bt or 0) + dt
   LV.dt_ = (LV.dt_ or 0) + dt
-  if LV.dt_ > 0.5 then LV.dt_ = 0 lvDrain() end
+  if LV.dt_ > 2.0 then LV.dt_ = 0 lvDrain() end
   if LV.bt > 45 then
     LV.bt = 0
     -- (livery goes out with the phone's periodic hello and on changes)
