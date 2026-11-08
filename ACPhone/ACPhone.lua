@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.5.5'
-local BUILD = 45
+local VERSION = '1.6.0'
+local BUILD = 46
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -868,6 +868,45 @@ end
 -- Notifications (in-phone banners, or AC messages when the phone is closed)
 -- ===========================================================================
 
+-- ===========================================================================
+-- Network pacing + health log. Every online message goes through one queue: the server drops anything that comes
+-- too fast, so messages go out one at a time, most important first, and are retried until the game says they left.
+-- ===========================================================================
+local DIAG = { errs = {}, hitches = 0, worst = 0, frames = 0, cost = 0, since = clock() }
+function DIAG.err(tag, e)
+  local list = DIAG.errs
+  local msg = tostring(e):gsub('%s+', ' '):sub(1, 140)
+  for _, it in ipairs(list) do if it.tag == tag and it.msg == msg then it.n = it.n + 1 it.at = os.time() return end end
+  table.insert(list, 1, { tag = tag, msg = msg, n = 1, at = os.time() })
+  while #list > 30 do table.remove(list) end
+end
+local NET = { q = {}, nextAt = 0, sent = 0, dropped = 0, retried = 0 }
+function NET.send(fn, prio, key)
+  if key then for _, it in ipairs(NET.q) do if it.key == key then it.fn = fn return end end end
+  NET.q[#NET.q + 1] = { fn = fn, prio = prio or 3, key = key, tries = 0 }
+  if #NET.q > 60 then   -- never let a backlog build: drop the least important oldest
+    local wi = 1
+    for i, it in ipairs(NET.q) do if it.prio > NET.q[wi].prio then wi = i end end
+    table.remove(NET.q, wi) NET.dropped = NET.dropped + 1
+  end
+end
+function NET.tick()
+  local now = clock()
+  if now < NET.nextAt or #NET.q == 0 then return end
+  local bi = 1
+  for i, it in ipairs(NET.q) do if it.prio < NET.q[bi].prio then bi = i end end
+  local it = NET.q[bi]
+  local ok, sent = pcall(it.fn)
+  it.tries = it.tries + 1
+  if not ok then DIAG.err('net', sent) table.remove(NET.q, bi) NET.dropped = NET.dropped + 1 NET.nextAt = now + 0.1
+  elseif sent ~= false then table.remove(NET.q, bi) NET.sent = NET.sent + 1 NET.nextAt = now + 0.25
+  else
+    NET.retried = NET.retried + 1
+    NET.nextAt = now + 0.3
+    if it.tries >= 10 then table.remove(NET.q, bi) NET.dropped = NET.dropped + 1 end
+  end
+end
+
 local BANNERS = {}   -- { title, body, icon, t, action }
 local PHONE_STATE = nil  -- set later to the PHONE table
 
@@ -1034,7 +1073,7 @@ local sendPresence = ac.OnlineEvent({
 end)
 
 local function broadcastPresence()
-  pcall(sendPresence, { status = utf8Trim(S.status, 40) })
+  NET.send(function() return sendPresence({ status = utf8Trim(S.status, 40) }) end, 3, 'presence')
 end
 
 local lastSend = -10
@@ -1042,14 +1081,14 @@ local function sendText(threadId, body)
   body = trim(body)
   if body == '' or clock() - lastSend < 0.35 then return false end
   body = utf8Trim(body, 140)
-  pcall(sendMsg, { to = threadId, kind = 0, text = body })
+  NET.send(function() return sendMsg({ to = threadId, kind = 0, text = body }) end, 1)
   lastSend = clock()
   addMessage(threadId, nil, 'You', body, true, 0)
   return true
 end
 
 local function sendHonk(sid, name)
-  pcall(sendMsg, { to = sid, kind = 1, text = 'HONK' })
+  NET.send(function() return sendMsg({ to = sid, kind = 1, text = 'HONK' }) end, 1)
   addMessage(sid, name, 'You', 'HONK', true, 1)
 end
 
@@ -1117,7 +1156,7 @@ local plateEvent = ac.OnlineEvent({
 end)
 
 local function plateBroadcast()
-  if S.plateSync then pcall(plateEvent, { hackaPlateText = PL.text, hackaPlateCountry = PL.country }, true) end
+  if S.plateSync then NET.send(function() return plateEvent({ hackaPlateText = PL.text, hackaPlateCountry = PL.country }, true) end, 3, 'plate') end
 end
 
 local function remember(list, v)
@@ -1304,13 +1343,13 @@ skinRequest = ac.OnlineEvent({
   received = ac.StructItem.boolean(),
 }, function(sender, data)
   if sender and sender.index ~= 0 and S.skinSync and SK.active[0] then
-    pcall(skinEvent, { AppBasedSkinID = SK.active[0] })
+    NET.send(function() return skinEvent({ AppBasedSkinID = SK.active[0] }) end, 3, 'skin')
   end
 end, ac.SharedNamespace.Global, false)
 
 local function skinSet(key)
   skinApply(0, key)
-  if S.skinSync then pcall(skinEvent, { AppBasedSkinID = key or skinOriginal(0) }) end
+  if S.skinSync then local k = key or skinOriginal(0) NET.send(function() return skinEvent({ AppBasedSkinID = k }) end, 3, 'skin') end
 end
 
 SK.prettySkin = prettySkin
@@ -1665,7 +1704,7 @@ local function send(d)
   d.kind = d.kind or 0
   d.to, d.id, d.item, d.qty, d.price = d.to or 0, d.id or 0, d.item or 0, d.qty or 0, d.price or 0
   d.wealth = math.floor(math.min(XM.netWorth(), 2100000000))
-  pcall(ecoSend, d)
+  if d.kind == 0 then NET.send(function() return ecoSend(d) end, 3, 'wealth') else NET.send(function() return ecoSend(d) end, 2) end
 end
 XM.ecoBeacon = function() send({ kind = 0 }) end
 
@@ -1860,12 +1899,8 @@ function R.busy() return R.run ~= nil and (R.run.phase == 'countdown' or R.run.p
 local raceSend
 -- Servers drop messages that come too fast or too close to other traffic, so everything goes through an outbox:
 -- one message at a time, retried until the game confirms it left, and the important ones are sent again a bit later.
-R.outbox, R.nextSend = {}, 0
 local function push(msg)
-  if msg.kind == 6 then   -- live progress: only the newest one matters
-    for i = #R.outbox, 1, -1 do if R.outbox[i].kind == 6 then table.remove(R.outbox, i) end end
-  end
-  R.outbox[#R.outbox + 1] = { kind = msg.kind, tries = 0, data = msg }
+  NET.send(function() return raceSend(msg) end, 1, msg.kind == 6 and 'race6' or nil)
 end
 local function send(kind, to, f)
   if not raceSend then return end
@@ -1882,20 +1917,7 @@ local function send(kind, to, f)
     setTimeout(function() push(msg) end, 3.1)
   end
 end
-function R.pump()
-  local now = clock()
-  if now < R.nextSend or #R.outbox == 0 then return end
-  local item = R.outbox[1]
-  local ok, sent = pcall(raceSend, item.data)
-  item.tries = item.tries + 1
-  if ok and sent ~= false then
-    table.remove(R.outbox, 1)
-    R.nextSend = now + 0.3
-  else
-    R.nextSend = now + 0.35
-    if item.tries >= 14 then table.remove(R.outbox, 1) end
-  end
-end
+function R.pump() end
 
 local function reset()
   R.state, R.cur, R.run = 'idle', nil, nil
@@ -2058,7 +2080,8 @@ end)
 function R.lbBroadcast()
   local t60, c60 = R.myBest(LB_KEYS.t60)
   local t200, c200 = R.myBest(LB_KEYS.t200)
-  lbSend({ t60 = t60 or 0, t200 = t200 or 0, wins = S.raceWins, car60 = (c60 or ''):sub(1, 22), car200 = (c200 or ''):sub(1, 22) })
+  local d = { t60 = t60 or 0, t200 = t200 or 0, wins = S.raceWins, car60 = (c60 or ''):sub(1, 22), car200 = (c200 or ''):sub(1, 22) }
+  NET.send(function() return lbSend(d) end, 3, 'lb')
   R.lbAt = clock() + 25
 end
 -- kind: 'wins' | 't60' | 't200'; rows sorted best first
@@ -3174,10 +3197,10 @@ local function broadcast(evt, last)
     pb = math.floor(S.hesiPB), mult = math.floor(HESI.mult * 10), state = HESI.running and 1 or 0,
     evt = evt or 0, last = math.floor(last or 0), crashes = HESI.crashes, seq = HESI.seq,
   }
-  pcall(hesiSend, data)
+  if evt and evt ~= 0 then NET.send(function() return hesiSend(data) end, 2) else NET.send(function() return hesiSend(data) end, 3, 'hesi') end
   if evt and evt ~= 0 then
     -- crash/bank results are what the boards reshuffle on, so send them twice in case one is dropped
-    setTimeout(function() pcall(hesiSend, data) end, 0.7)
+    setTimeout(function() NET.send(function() return hesiSend(data) end, 2) end, 0.7)
   end
 end
 
@@ -4972,14 +4995,15 @@ function APPMOD.Settings.root()
     W.groupBg(y, 1)
     if W.row('se.wp', 'Personalize', y, { icon = '@SLIDERS', iconBg = rgbm(0.6, 0.3, 0.9, 1), value = (THEME or THEMES[1]).name, chevron = true, first = true, last = true }) then navPush(APPMOD.Themes.root()) end
     y = y + 66
-    W.groupBg(y, 3)
+    W.groupBg(y, 4)
     local hasUpd = UPD.latest and tonumber(UPD.latest.build) and tonumber(UPD.latest.build) > BUILD
     if W.row('se.upd', 'Software Update', y, { icon = '⬆️', iconBg = rgbm(0.45, 0.45, 0.5, 1), value = hasUpd and '1 new' or '', chevron = true, first = true }) then navPush(updateScreen()) end
     if hasUpd then circle(LIST.x + LIST.w - 70, y + 23, 9, T.red) text('1', 12, LIST.x + LIST.w - 70, y + 15, T.white, F.sb, 0.5) end
     y = y + 46
     W.row('se.ver', 'Version', y, { value = VERSION })
-    W.row('se.srv', 'Server', y + 46, { value = ac.getSim().isOnlineRace and ((ac.getServerName and ac.getServerName()) or 'Online') or 'Offline', last = true })
-    y = W.sectionFooter('HackaPhone by smartnajeeri. Messages, plates and skins sync with friends on the same server.', y + 92)
+    W.row('se.srv', 'Server', y + 46, { value = ac.getSim().isOnlineRace and ((ac.getServerName and ac.getServerName()) or 'Online') or 'Offline' })
+    if W.row('se.health', 'Phone health', y + 92, { value = #DIAG.errs > 0 and (#DIAG.errs .. ' issues') or 'OK', chevron = true, last = true }) then navPush(XM.healthScreen()) end
+    y = W.sectionFooter('HackaPhone by smartnajeeri. Messages, plates and skins sync with friends on the same server.', y + 138)
     scrollEnd(s, y + 20)
     navBar('Settings', { large = true }, s.y)
   end
@@ -5693,7 +5717,7 @@ local function lvDrain()
 end
 
 local function lvBroadcast()
-  if S.liverySync then pcall(liveryEvent, { data = lvPack(LV.cfg) }) end
+  if S.liverySync then local d = lvPack(LV.cfg) NET.send(function() return liveryEvent({ data = d }) end, 3, 'livery') end
 end
 
 local function lvCommit()
@@ -8486,7 +8510,7 @@ local verEvent = ac.OnlineEvent({
   pcall(U.note, ac.getDriverName(sender.index), tostring(d.ver), d.build)
 end)
 -- announce my version once; the game re-sends it to anyone who joins later
-function U.announce() pcall(verEvent, { ver = VERSION, build = BUILD }) end
+function U.announce() NET.send(function() return verEvent({ ver = VERSION, build = BUILD }) end, 3, 'ver') end
 -- anyone sending presence is running the app (older versions don't announce a version)
 function U.tick(dt)
   U.t = (U.t or 0) + dt
@@ -8528,6 +8552,65 @@ function XM.usersScreen()
   end
   return scr
 end
+end
+
+
+-- ===========================================================================
+-- Phone health: network queue, hitches and any errors the phone caught, with a copy-able report
+-- ===========================================================================
+function XM.memMB() local ok, v = pcall(collectgarbage, 'count') return ok and (v / 1024) or 0 end
+function XM.healthReport()
+  local lines = {
+    'HackaPhone ' .. VERSION .. ' (build ' .. BUILD .. ')',
+    'Car: ' .. tostring(ac.getCarID(0)) .. ' · Online: ' .. tostring(ac.getSim().isOnlineRace) .. ' · Cars: ' .. tostring(ac.getSim().carsCount),
+    string.format('Net: sent %d · retried %d · dropped %d · queued %d', NET.sent, NET.retried, NET.dropped, #NET.q),
+    string.format('Frames: %d · hitches>100ms %d · worst %.0f ms · memory %.1f MB', DIAG.frames, DIAG.hitches, DIAG.worst * 1000, XM.memMB()),
+  }
+  for _, e in ipairs(DIAG.errs) do lines[#lines + 1] = string.format('[%s x%d] %s', e.tag, e.n, e.msg) end
+  return table.concat(lines, '\n')
+end
+
+function XM.healthScreen()
+  local scr = { title = 'Phone health' }
+  function scr.draw()
+    bgFill()
+    local s = scrollBegin('health', 94, BOTTOM)
+    local y = 104
+    y = W.sectionHeader('Network', y)
+    W.groupBg(y, 4)
+    W.row('h.sent', 'Sent', y, { value = tostring(NET.sent), first = true })
+    W.row('h.retry', 'Retried (server was busy)', y + 46, { value = tostring(NET.retried) })
+    W.row('h.drop', 'Gave up on', y + 92, { value = tostring(NET.dropped) })
+    W.row('h.q', 'Waiting to send', y + 138, { value = tostring(#NET.q), last = true })
+    y = y + 138 + 46 + 14
+    y = W.sectionHeader('Performance', y)
+    W.groupBg(y, 3)
+    W.row('h.hit', 'Hitches over 100 ms', y, { value = tostring(DIAG.hitches), first = true })
+    W.row('h.worst', 'Worst frame', y + 46, { value = string.format('%.0f ms', DIAG.worst * 1000) })
+    W.row('h.mem', 'Phone memory', y + 92, { value = string.format('%.1f MB', XM.memMB()), last = true })
+    y = y + 138 + 14
+    y = W.sectionHeader(#DIAG.errs == 0 and 'No problems caught' or 'Problems caught', y)
+    if #DIAG.errs > 0 then
+      W.groupBg(y, #DIAG.errs)
+      for i, e in ipairs(DIAG.errs) do
+        W.row('h.e' .. i, e.tag .. (e.n > 1 and (' ×' .. e.n) or ''), y, { first = i == 1, last = i == #DIAG.errs, sub = e.msg })
+        y = y + 46
+      end
+      y = y + 8
+    end
+    if W.button('h.copy', 'Copy report', 16, y, (SW - 40) / 2, 42, 'filled') then
+      pcall(ui.setClipboardText, XM.healthReport())
+      toast('Copied', 'Paste it to whoever is fixing the phone', '📋')
+    end
+    if W.button('h.clear', 'Clear', 24 + (SW - 40) / 2, y, (SW - 40) / 2, 42, 'gray') then
+      DIAG.errs = {} DIAG.hitches, DIAG.worst, DIAG.frames = 0, 0, 0
+      NET.sent, NET.retried, NET.dropped = 0, 0, 0
+    end
+    y = y + 56
+    scrollEnd(s, y + 24)
+    navBar('Phone health', { back = 'Settings' })
+  end
+  return scr
 end
 -- ===========================================================================
 -- App registry
@@ -9536,6 +9619,7 @@ local function homeScreen()
   if not ok then
     while #clipStack > depth do popClip() end
     HOME.err = tostring(err)
+    DIAG.err('home', err)
     if HOME.errLogged ~= HOME.err then HOME.errLogged = HOME.err ac.log('HackaPhone home: ' .. HOME.err) end
     HOME.drag, HOME.edit = nil, false
     HOME.L = nil
@@ -10060,14 +10144,18 @@ function PHONE.beaconTick(dt)
 end
 
 function script.update(dt)
-  pcall(PHONE.beaconTick, dt)
+  NET.tick()
+  DIAG.frames = DIAG.frames + 1
+  if dt > 0.1 then DIAG.hitches = DIAG.hitches + 1 end
+  if dt > DIAG.worst then DIAG.worst = dt end
+  do local ok, e = pcall(PHONE.beaconTick, dt) if not ok then DIAG.err('beacon', e) end end
   if not SHEET.started then
     SHEET.started = true
     pcall(LIVERY_API.selfTest)
     setTimeout(function()
       if ac.getSim().isOnlineRace then
         broadcastPresence()
-        pcall(skinRequest, { received = true })
+        NET.send(function() return skinRequest({ received = true }) end, 3, 'skinreq')
       end
       if S.plateAutoApply and PL.text ~= '' then PL.apply(0, PL.text, PL.country) PL.broadcast() end
       pcall(XM.users.announce)
@@ -10091,8 +10179,8 @@ function script.update(dt)
   XM.tick(dt)
   XM.race.update(dt)
   XM.vault.update(dt)
-  pcall(XM.car.update, dt)
-  pcall(XM.users.tick, dt)
+  do local ok, e = pcall(XM.car.update, dt) if not ok then DIAG.err('car', e) end end
+  do local ok, e = pcall(XM.users.tick, dt) if not ok then DIAG.err('users', e) end end
   -- walking/video/photo stop if the phone is closed while minimised? keep running; chase handled in camUpdate
 end
 

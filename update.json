@@ -1,12 +1,12 @@
 {
-  "version": "1.5.5",
-  "build": 45,
-  "notes": "Video app now records through Medal.",
+  "version": "1.6.0",
+  "build": 46,
+  "notes": "Big update: steadier online play and a new Phone health screen in Settings.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 454211
+      "size": 459754
     },
     {
       "path": "manifest.ini",
