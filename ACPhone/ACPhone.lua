@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.5.4'
-local BUILD = 44
+local VERSION = '1.5.5'
+local BUILD = 45
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -3606,13 +3606,18 @@ function MEDIA.combo(keys)
   end, 0.08)
   return true
 end
--- 1 = NVIDIA ShadowPlay (Alt+F9 toggles), 2 = OBS (Ctrl+Alt+F9 start, Ctrl+Alt+F10 stop), 3 = off
-function MEDIA.recorder(start)
-  local mode = S.recApp or 1
-  if mode == 1 then return MEDIA.combo({ 18, 120 }) end
-  if mode == 2 then return MEDIA.combo({ 17, 18, start and 120 or 121 }) end
-  return false
+-- Medal is required: Alt+F7 starts and stops a full-length recording ("Start/stop long recording hotkey" must be on in Medal)
+MEDIA.medal = 'unknown'     -- unknown | running | missing
+function MEDIA.medalCheck()
+  if clock() - (MEDIA.medalAt or -99) < 4 then return end
+  MEDIA.medalAt = clock()
+  local ok = pcall(os.runConsoleProcess, { filename = 'tasklist', arguments = { '/FI', 'IMAGENAME eq Medal.exe', '/NH' }, timeout = 5000 }, function(err, res)
+    if err or not res or res.exitCode ~= 0 then MEDIA.medal = 'unknown' return end
+    MEDIA.medal = (res.stdout or ''):lower():find('medal.exe', 1, true) and 'running' or 'missing'
+  end)
+  if not ok then MEDIA.medal = 'unknown' end
 end
+function MEDIA.recorder(start) return MEDIA.combo({ 18, 118 }) end
 
 local function guard()
   if clock() - MEDIA.lastSend < 0.25 then return false end
@@ -4282,13 +4287,14 @@ function APPMOD.Video.root()
     y = y + 8
     W.groupBg(y, 1)
     S.camHideApps = W.toggleRow('vhide', 'Hide other apps while filming', S.camHideApps, y, { last = true, first = true })
-    y = W.sectionHeader('Record with', y + 54)
-    S.recApp = W.segmented('v.recapp', { 'ShadowPlay', 'OBS', 'Off' }, S.recApp or 1, 16, y, SW - 32)
-    y = y + 50
-    y = W.sectionFooter(({
-      'REC starts and Stop ends NVIDIA recording for you (Alt+F9). Turn on Instant Replay / recording in the NVIDIA overlay first.',
-      'REC and Stop press Ctrl+Alt+F9 and Ctrl+Alt+F10. In OBS open Settings › Hotkeys and set Start Recording to Ctrl+Alt+F9 and Stop Recording to Ctrl+Alt+F10.',
-      'AC can’t encode video itself. Press REC, then start your own recorder.' })[S.recApp or 1], y)
+    MEDIA.medalCheck()
+    y = W.sectionHeader('Recorder', y + 54)
+    W.groupBg(y, 1)
+    local ms = MEDIA.medal
+    W.row('v.medal', 'Medal', y, { first = true, last = true, icon = '🎥', iconBg = rgbm(1, 0.7, 0.1, 1),
+      sub = ms == 'running' and 'Running · ready to record' or (ms == 'missing' and 'Not running · open Medal first' or 'Required for recording') })
+    circle(SW - 32, y + 23, 6, ms == 'running' and T.green or (ms == 'missing' and T.red or T.label3))
+    y = W.sectionFooter('REC starts and Stop ends a full-length Medal recording (Alt+F7). In Medal turn on Settings › Capture Hotkeys › Long Recording › Start/stop long recording hotkey. Your video appears in Medal’s Library under Sessions.', y + 50)
     scrollEnd(s, y + 10)
     navBar('Video', { large = true }, s.y)
     -- bottom bar: preview + record
@@ -4299,16 +4305,18 @@ function APPMOD.Video.root()
       if live then camRelease() else if CAM.mode then camRelease() end videoStart() end
     end
     if shutterButton('rec', SW / 2, by + 46, 64, true) then
-      if CAM.mode ~= 'video' then if CAM.mode then camRelease() end videoStart() end
-      CAM.recording = true
-      CAM.recStart = clock()
-      if S.camHideApps then hideOtherApps(true) end
-      setMinimized(true, 'rec')
-      if (S.recApp or 1) ~= 3 then
+      if MEDIA.medal == 'missing' then
+        toast('Medal is required', 'Open Medal, then press REC again', '⚠️')
+      else
+        if CAM.mode ~= 'video' then if CAM.mode then camRelease() end videoStart() end
+        CAM.recording = true
+        CAM.recStart = clock()
+        if S.camHideApps then hideOtherApps(true) end
+        setMinimized(true, 'rec')
         setTimeout(function()
           if CAM.recording then
             CAM.recOn = MEDIA.recorder(true)
-            if not CAM.recOn then toast('Couldn’t start your recorder', 'Press its record hotkey yourself', '⚠️') end
+            if not CAM.recOn then toast('Couldn’t start Medal', 'Press Alt+F7 yourself', '⚠️') end
           end
         end, 0.8)
       end
@@ -9631,9 +9639,9 @@ local function capsule()
       if CAM.recOn then
         CAM.recOn = false
         pcall(MEDIA.recorder, false)
-        toast('Recording stopped', 'Your video is saved by ' .. ((S.recApp or 1) == 2 and 'OBS' or 'NVIDIA'), '🎬')
+        toast('Recording stopped', 'Find it in Medal › Library › Sessions', '🎬')
       else
-        toast('Recording stopped', 'Stop your OBS / ShadowPlay capture too', '🎬')
+        toast('Recording stopped', 'Press Alt+F7 if Medal is still recording', '🎬')
       end
     end
   else
