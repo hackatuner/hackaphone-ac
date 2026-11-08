@@ -1,12 +1,12 @@
 {
-  "version": "1.6.0",
-  "build": 46,
-  "notes": "Big update: steadier online play and a new Phone health screen in Settings.",
+  "version": "1.6.1",
+  "build": 47,
+  "notes": "Smoother crashes: less work at the moment of impact, quieter crash alerts, lighter traffic scan.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 459754
+      "size": 462004
     },
     {
       "path": "manifest.ini",

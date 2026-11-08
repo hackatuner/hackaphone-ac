@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.6.0'
-local BUILD = 46
+local VERSION = '1.6.1'
+local BUILD = 47
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -873,6 +873,16 @@ end
 -- too fast, so messages go out one at a time, most important first, and are retried until the game says they left.
 -- ===========================================================================
 local DIAG = { errs = {}, hitches = 0, worst = 0, frames = 0, cost = 0, since = clock() }
+DIAG.cost, DIAG.peak = {}, {}
+-- run one piece of per-frame work, remember how long it takes, and make sure its failure can't stop the rest
+function DIAG.time(name, fn, a)
+  local t0 = os.preciseClock()
+  local ok, e = pcall(fn, a)
+  local d = os.preciseClock() - t0
+  DIAG.cost[name] = (DIAG.cost[name] or d) * 0.97 + d * 0.03
+  if d > (DIAG.peak[name] or 0) then DIAG.peak[name] = d end
+  if not ok then DIAG.err(name, e) end
+end
 function DIAG.err(tag, e)
   local list = DIAG.errs
   local msg = tostring(e):gsub('%s+', ' '):sub(1, 140)
@@ -3219,11 +3229,21 @@ local function endRun(crashed)
     near = (st.near or 0), close = (st.close or 0), split = (st.split or 0), oncoming = (st.oncoming or 0),
     overtake = (st.overtake or 0), pb = score > S.hesiPB, at = os.date('%H:%M'),
     avg = (HESI.runTime > 1) and ((st.dist or 0) / HESI.runTime * 3.6) or 0, saved = saved, boost = fx.mult or 1, fxNames = fx.names }
-  local okPay, payout = pcall(XM.onRunEnd, HESI.lastRun, crashed, fx)   -- money must never block scoring
-  if okPay then pushFeed('CASH  +$' .. fmtPts(payout), rgbm(0.5, 1, 0.6, 1)) else ac.log('HackaPhone payout error: ' .. tostring(payout)) end
-  S.hesiRuns = S.hesiRuns + 1
-  S.hesiNear = S.hesiNear + HESI.near
+  -- the crash frame is already the busiest of the whole session, so the saving, paying and notifying is spread over
+  -- the next second instead of happening in the same frame
+  local nearNow = HESI.near
   HESI.near = 0
+  local lastRun = HESI.lastRun
+  lastRun.pay = XM.payoutFor and XM.payoutFor(score, crashed, fx) or 0
+  setTimeout(function()
+    local okPay, payout = pcall(XM.onRunEnd, lastRun, crashed, fx)   -- money must never block scoring
+    if okPay then pushFeed('CASH  +$' .. fmtPts(payout), rgbm(0.5, 1, 0.6, 1)) else DIAG.err('payout', payout) end
+  end, 0.6)
+  setTimeout(function()
+    S.hesiRuns = S.hesiRuns + 1
+    S.hesiNear = S.hesiNear + nearNow
+    S.hesiTotal = S.hesiTotal + score
+  end, 0.9)
   HESI.seq = (HESI.seq + 1) % 30000
   -- every run banks, crash or not: the points are yours either way
   if crashed then
@@ -3237,14 +3257,13 @@ local function endRun(crashed)
     pushFeed('BANKED  +' .. fmtPts(score), rgbm(0.3, 1, 0.5, 1), true)
   end
   HESI.sessionTotal = HESI.sessionTotal + score
-  S.hesiTotal = S.hesiTotal + score
   if score > HESI.sessionBest then HESI.sessionBest = score end
-  if score > S.hesiPB then
-    S.hesiPB = score
-    notify('New personal best! 🏆', fmtPts(score) .. ' points', '🔥', nil, { force = true })
-  elseif score > 5000 then
-    notify(crashed and 'Crashed, but banked' or 'Run banked', fmtPts(score) .. ' points', '🔥', nil, { quietWhenClosed = true })
-  end
+  local newPB = score > S.hesiPB
+  if newPB then S.hesiPB = score end
+  setTimeout(function()
+    if newPB then notify('New personal best! 🏆', fmtPts(score) .. ' points', '🔥', nil, { force = true })
+    elseif score > 5000 and not crashed then notify('Run banked', fmtPts(score) .. ' points', '🔥', nil, { quietWhenClosed = true }) end
+  end, 1.2)
   HESI.run, HESI.mult, HESI.combo = 0, 1, 0
   HESI.pw, HESI.bankTime, HESI.comboMax = {}, 3, 7
   HESI.lastEvt = { kind = crashed and 1 or 2, score = score, at = clock() }
@@ -3266,9 +3285,9 @@ hesiSend = ac.OnlineEvent({
   -- a crash or bank result: show it right away and keep it on their row for a bit
   if d.evt ~= 0 and (not prev or prev.evSeq ~= d.seq) then
     ev = { kind = d.evt, score = d.last, at = clock() }
-    if d.evt == 1 then
-      if d.last >= 500 then pushFeed(name:upper() .. ' CRASHED  +' .. fmtPts(d.last), T.red, false) end
-    elseif d.last >= 2000 then
+    -- other people's crashes stay on the board only; a big bank gets one line, at most one every few seconds
+    if d.evt == 2 and d.last >= 5000 and clock() - (HESI.lastOtherFeed or -99) > 6 then
+      HESI.lastOtherFeed = clock()
       pushFeed(name:upper() .. ' BANKED  +' .. fmtPts(d.last), rgbm(0.35, 1, 0.55, 1), false)
     end
   end
@@ -3282,7 +3301,8 @@ hesiSend = ac.OnlineEvent({
     crew = (ok and type(crew) == 'table') and crew or {}
     if (crew[name] or 0) < d.pb then crew[name] = d.pb S.hesiCrew = JSON.stringify(crew) end
   end
-  if prev and d.best > (prev.best or 0) and d.best > 5000 and d.best >= HESI.sessionBest then
+  if prev and d.best > (prev.best or 0) and d.best > 5000 and d.best >= HESI.sessionBest and clock() - (HESI.lastTopNotify or -99) > 45 then
+    HESI.lastTopNotify = clock()
     notify(name .. ' set the top run 🔥', fmtPts(d.best) .. ' points', '🔥', nil, { quietWhenClosed = true })
   end
 end)
@@ -3331,13 +3351,17 @@ local function hesiUpdate(dt)
   -- traffic passes
   local fwd, side = me.look, me.side
   local sim = ac.getSim()
+  local mp = me.position
+  local mx, my, mz = mp.x, mp.y, mp.z
   for i = 1, sim.carsCount - 1 do
     local c = ac.getCar(i)
     if c and c.isConnected ~= false and c.isActive ~= false then
-      local rel = c.position - me.position
-      local dist = rel:length()
+      local cp = c.position
+      local ddx, ddy, ddz = cp.x - mx, cp.y - my, cp.z - mz
+      local near2 = ddx * ddx + ddy * ddy + ddz * ddz
       local st = HESI.cars[i]
-      if dist < 30 then
+      if near2 < 900 then
+        local rel = cp - mp
         local along = rel:dot(fwd)
         local lat = rel:dot(side)
         if not st then st = { along = along, minLat = 99, slip = 0 } HESI.cars[i] = st end
@@ -8566,6 +8590,10 @@ function XM.healthReport()
     string.format('Net: sent %d · retried %d · dropped %d · queued %d', NET.sent, NET.retried, NET.dropped, #NET.q),
     string.format('Frames: %d · hitches>100ms %d · worst %.0f ms · memory %.1f MB', DIAG.frames, DIAG.hitches, DIAG.worst * 1000, XM.memMB()),
   }
+  local names = {}
+  for k in pairs(DIAG.cost) do names[#names + 1] = k end
+  table.sort(names, function(a, b) return DIAG.cost[a] > DIAG.cost[b] end)
+  for i = 1, math.min(5, #names) do lines[#lines + 1] = string.format('cost %s %.2f ms (peak %.1f)', names[i], DIAG.cost[names[i]] * 1000, (DIAG.peak[names[i]] or 0) * 1000) end
   for _, e in ipairs(DIAG.errs) do lines[#lines + 1] = string.format('[%s x%d] %s', e.tag, e.n, e.msg) end
   return table.concat(lines, '\n')
 end
@@ -8589,6 +8617,20 @@ function XM.healthScreen()
     W.row('h.worst', 'Worst frame', y + 46, { value = string.format('%.0f ms', DIAG.worst * 1000) })
     W.row('h.mem', 'Phone memory', y + 92, { value = string.format('%.1f MB', XM.memMB()), last = true })
     y = y + 138 + 14
+    local names = {}
+    for k in pairs(DIAG.cost) do names[#names + 1] = k end
+    table.sort(names, function(a, b) return DIAG.cost[a] > DIAG.cost[b] end)
+    local nShow = math.min(4, #names)
+    if nShow > 0 then
+      y = W.sectionHeader('Time per frame (top ' .. nShow .. ')', y)
+      W.groupBg(y, nShow)
+      for i = 1, nShow do
+        local k = names[i]
+        W.row('h.c' .. k, k, y, { first = i == 1, last = i == nShow, value = string.format('%.2f ms · peak %.1f', DIAG.cost[k] * 1000, (DIAG.peak[k] or 0) * 1000) })
+        y = y + 46
+      end
+      y = y + 14
+    end
     y = W.sectionHeader(#DIAG.errs == 0 and 'No problems caught' or 'Problems caught', y)
     if #DIAG.errs > 0 then
       W.groupBg(y, #DIAG.errs)
@@ -10169,16 +10211,16 @@ function script.update(dt)
   if phoneButton and phoneButton:pressed() then
     ac.setWindowOpen('main', not ac.isWindowOpen('main'))
   end
-  shutterTick()
-  PL.update()
-  pcall(LIVERY_API.tick, dt)
-  liveUpdate()
-  UPD.tick()
-  PHONE.lapTrack()
-  HESI.update(dt)
-  XM.tick(dt)
-  XM.race.update(dt)
-  XM.vault.update(dt)
+  DIAG.time('camera', shutterTick)
+  DIAG.time('plates', PL.update)
+  DIAG.time('livery', LIVERY_API.tick, dt)
+  DIAG.time('live', liveUpdate)
+  DIAG.time('updates', UPD.tick)
+  DIAG.time('laps', PHONE.lapTrack)
+  DIAG.time('cut-up', HESI.update, dt)
+  DIAG.time('economy', XM.tick, dt)
+  DIAG.time('race', XM.race.update, dt)
+  DIAG.time('vault', XM.vault.update, dt)
   do local ok, e = pcall(XM.car.update, dt) if not ok then DIAG.err('car', e) end end
   do local ok, e = pcall(XM.users.tick, dt) if not ok then DIAG.err('users', e) end end
   -- walking/video/photo stop if the phone is closed while minimised? keep running; chase handled in camUpdate
