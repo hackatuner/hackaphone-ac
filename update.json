@@ -1,12 +1,12 @@
 {
-  "version": "1.6.5",
-  "build": 51,
-  "notes": "Fixed money sent to friends. Large amounts could show up as a negative balance.",
+  "version": "1.6.6",
+  "build": 52,
+  "notes": "Players now find each other faster, and you can send any amount of money.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 466236
+      "size": 466760
     },
     {
       "path": "manifest.ini",

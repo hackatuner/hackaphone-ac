@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.6.5'
-local BUILD = 51
+local VERSION = '1.6.6'
+local BUILD = 52
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -1103,7 +1103,10 @@ local sendPresence = ac.OnlineEvent({
   status = ac.StructItem.string(40),
 }, function(sender, data)
   if sender == nil or sender.index == 0 then return end
+  local isNew = presence[sender.sessionID] == nil
   presence[sender.sessionID] = { status = tostring(data.status) }
+  -- someone I hadn't seen yet: answer so they see me too (spread out and merged, never a burst)
+  if isNew and NET.onNewPeer then NET.onNewPeer() end
 end)
 
 local function broadcastPresence()
@@ -1796,8 +1799,14 @@ end)
 
 function XM.sendMoney(sid, name, amount)
   amount = math.floor(amount)
-  if amount <= 0 or amount > 2000000000 or not XM.spend(amount, 'Sent to ' .. name) then return false end
-  send({ kind = 2, to = sid, price = amount })
+  if amount <= 0 or amount ~= amount or not XM.spend(amount, 'Sent to ' .. name) then return false end
+  -- one message holds at most 2 billion, so bigger amounts go as several messages that add up
+  local left = amount
+  while left > 0 do
+    local part = math.min(left, 2000000000)
+    send({ kind = 2, to = sid, price = part })
+    left = left - part
+  end
   return true
 end
 
@@ -6785,7 +6794,7 @@ local function sendScreen()
     y = W.sectionHeader('Amount', y)
     rect(LIST.x, y, LIST.x + LIST.w, y + 110, T.cell, 14)
     text(money(amount), 30, SW / 2, y + 12, T.white, F.numb, 0.5)
-    local maxA = math.max(10, math.min(XM.cash(), 2000000000))
+    local maxA = math.max(10, XM.cash())
     local v, ch = W.slider('bs.amt', math.sqrt(amount / maxA), 0, 1, LIST.x + 20, y + 60, LIST.w - 40)
     if ch then amount = math.max(10, math.floor(v * v * maxA / 10) * 10) end
     y = y + 124
@@ -10235,9 +10244,10 @@ function PHONE.beaconSoon()
   setTimeout(function() PHONE.beaconQueued = false PHONE.beacon() end, 3 + math.random() * 9)
 end
 XM.beaconSoon = PHONE.beaconSoon
+NET.onNewPeer = PHONE.beaconSoon
 function PHONE.beaconTick(dt)
-  PHONE.beaconT = (PHONE.beaconT or (40 + math.random() * 30)) - dt
-  if PHONE.beaconT <= 0 then PHONE.beaconT = 90 + math.random() * 30 PHONE.beacon() end
+  PHONE.beaconT = (PHONE.beaconT or (25 + math.random() * 20)) - dt
+  if PHONE.beaconT <= 0 then PHONE.beaconT = 55 + math.random() * 25 PHONE.beacon() end
 end
 
 function script.update(dt)
@@ -10274,6 +10284,7 @@ function script.update(dt)
       end
       if S.plateAutoApply and PL.text ~= '' then PL.apply(0, PL.text, PL.country) PL.broadcast() end
       pcall(XM.users.announce)
+      setTimeout(function() PHONE.beaconSoon() end, 12)   -- say hello again once the server has settled
       UPD.announce()
       XM.welcome.trigger()
       if S.actionBar then ac.setWindowOpen('actionbar', true) end
