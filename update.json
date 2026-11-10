@@ -1,12 +1,12 @@
 {
-  "version": "1.6.4",
-  "build": 50,
-  "notes": "Phone health now has a Send report button so lag reports reach the developers.",
+  "version": "1.6.5",
+  "build": 51,
+  "notes": "Fixed money sent to friends. Large amounts could show up as a negative balance.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 465947
+      "size": 466236
     },
     {
       "path": "manifest.ini",

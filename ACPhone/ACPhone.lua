@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.6.4'
-local BUILD = 50
+local VERSION = '1.6.5'
+local BUILD = 51
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -1511,7 +1511,10 @@ function XM.titleName()
 end
 
 -- ---------------------------------------------------------------- wallet
-function XM.cash() return math.floor(S.cash) end
+function XM.cash()
+  if S.cash ~= S.cash or S.cash < 0 then S.cash = 0 end   -- heals a balance that went negative
+  return math.floor(S.cash)
+end
 function XM.log(a, why)
   local log = jget('txLog', {})
   table.insert(log, 1, { t = os.time(), a = math.floor(a), why = why })
@@ -1520,8 +1523,9 @@ function XM.log(a, why)
 end
 function XM.add(a, why)
   a = math.floor(a)
-  if a == 0 then return end
+  if a == 0 or a ~= a then return end
   S.cash = XM.cash() + a
+  if S.cash < 0 then S.cash = 0 end
   XM.log(a, why or 'Income')
 end
 function XM.spend(a, why)
@@ -1753,6 +1757,7 @@ ecoSend = ac.OnlineEvent({
   XM.rich[sid] = { name = name, wealth = d.wealth, at = clock() }
   local me = mySessionID()
   if d.kind == 2 and d.to == me then                      -- money sent to me
+    if d.price <= 0 then return end                       -- never let a bad amount take money away
     XM.add(d.price, 'From ' .. name)
     notify(name .. ' sent you ' .. money(d.price), 'Added to your balance', '💾', nil, { force = true })
   elseif d.kind == 3 then                                 -- listing (re)announced
@@ -1791,7 +1796,7 @@ end)
 
 function XM.sendMoney(sid, name, amount)
   amount = math.floor(amount)
-  if amount <= 0 or not XM.spend(amount, 'Sent to ' .. name) then return false end
+  if amount <= 0 or amount > 2000000000 or not XM.spend(amount, 'Sent to ' .. name) then return false end
   send({ kind = 2, to = sid, price = amount })
   return true
 end
@@ -6780,7 +6785,7 @@ local function sendScreen()
     y = W.sectionHeader('Amount', y)
     rect(LIST.x, y, LIST.x + LIST.w, y + 110, T.cell, 14)
     text(money(amount), 30, SW / 2, y + 12, T.white, F.numb, 0.5)
-    local maxA = math.max(10, XM.cash())
+    local maxA = math.max(10, math.min(XM.cash(), 2000000000))
     local v, ch = W.slider('bs.amt', math.sqrt(amount / maxA), 0, 1, LIST.x + 20, y + 60, LIST.w - 40)
     if ch then amount = math.max(10, math.floor(v * v * maxA / 10) * 10) end
     y = y + 124
