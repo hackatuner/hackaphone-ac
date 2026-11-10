@@ -7,8 +7,8 @@
   network formats compatible with Hacka Plates and Skin Companion so friends using those apps stay in sync.
 ]]
 
-local VERSION = '1.6.6'
-local BUILD = 52
+local VERSION = '1.6.7'
+local BUILD = 53
 -- update feed for the crew (set once the GitHub repo exists)
 local UPDATE_FEED = 'https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/update.json'
 
@@ -101,7 +101,7 @@ local S = ac.storage({
   hesiNear = 0,
   hesiCrew = '{}',
   -- economy
-  cash = 1000, saved = 0, savedAt = 0, listSeq = 0, pwEquip = '', title = 'rookie',
+  cash = 1000, raceEscrow = 0, saved = 0, savedAt = 0, listSeq = 0, pwEquip = '', title = 'rookie',
   perks = '{}', titles = '{}', hold = '{}', inv = '{}', txLog = '[]', runLog = '[]', myList = '[]',
   -- race mode
   raceWins = 0, raceLosses = 0, raceStreak = 0, raceBests = '{}', raceLog = '[]', userLog = '{}',
@@ -1950,17 +1950,20 @@ local raceSend
 local function push(msg)
   NET.send(function() return raceSend(msg) end, 1, msg.kind == 6 and 'race6' or nil)
 end
-local function send(kind, to, f)
-  if not raceSend then return end
+local function build(kind, to, f)
   f = f or {}
   local c = R.cur
-  local msg = {
+  return {
     kind = kind, to = to or (c and c.oppSid) or 0, rid = f.rid or (c and c.rid) or 0, rtype = f.rtype or 0,
     x = math.floor(f.x or 0), y = math.floor(f.y or 0), wager = math.floor(f.wager or 0),
     t = f.t or 0, react = f.react or 0, d = f.d or 0, v = math.floor(f.v or 0), flags = f.flags or 0,
   }
+end
+local function send(kind, to, f)
+  if not raceSend then return end
+  local msg = build(kind, to, f)
   push(msg)
-  if kind ~= 1 and kind ~= 6 then      -- everything except the invite (re-sent while waiting) and progress is repeated, receivers ignore duplicates
+  if kind ~= 1 and kind ~= 6 and kind ~= 8 and kind ~= 9 and kind ~= 5 then      -- everything except the invite (re-sent while waiting) and progress is repeated, receivers ignore duplicates
     setTimeout(function() push(msg) end, 1.3)
     setTimeout(function() push(msg) end, 3.1)
   end
@@ -1976,6 +1979,13 @@ local function refund()
   local c = R.cur
   if c and c.escrow and c.wager > 0 then XM.add(c.wager, 'Race wager refunded') end
   if c then c.escrow = false end
+  S.raceEscrow = 0
+end
+-- a wager held when the game closed or crashed mid-race goes back to its owner on the next start
+if (S.raceEscrow or 0) > 0 then
+  local back = S.raceEscrow
+  S.raceEscrow = 0
+  setTimeout(function() XM.add(back, 'Race wager refunded (race was interrupted)') toast('Wager returned', XM.money(back) .. ' from an interrupted race', '🏁') end, 6)
 end
 
 -- never throw away a finished race that hasn't been paid yet: settle it (or give the wager back) before anything resets it
@@ -1997,11 +2007,13 @@ local function newRun(spec, mode)
     fromZero = spec.y == 0, falseStart = false, car = ac.getCarName(0) or '?' }
 end
 
-function R.startCountdown()
+R.COUNT = 6
+function R.startCountdown(goIn)
   local c = R.cur
   R.run = newRun(c.spec, 'race')
   R.run.phase = 'countdown'
-  R.run.goAt = clock() + 5.2
+  R.run.goAt = clock() + (goIn or R.COUNT)
+  c.goAt = R.run.goAt
   R.state = 'countdown'
   c.my, c.outcome = nil, nil
   c.opp = { d = 0, v = 0, at = clock() }
@@ -2041,6 +2053,7 @@ local function resolve(forfeitWin)
   end
   if o.payout > 0 and c.escrow then XM.add(o.payout, o.win and ('Won race vs ' .. c.oppName) or 'Race tie, wager back') end
   c.escrow = false
+  S.raceEscrow = 0
   c.outcome = o
   logRace(c, o)
   R.hudFade = 1
@@ -2078,6 +2091,7 @@ onEvent = function(sender, d)
       send(4, sid) toast('Race cancelled', 'You can’t cover the wager', '⚠️') reset() return
     end
     c.escrow = c.wager > 0
+    S.raceEscrow = c.escrow and c.wager or 0
     R.state = 'staging'
     notify(name .. ' accepted', 'Line up, then hit Start', '🏁', openUI, { force = true })
   elseif d.kind == 3 then                                     -- declined
@@ -2088,8 +2102,29 @@ onEvent = function(sender, d)
     refund()
     toast('Race cancelled', name .. ' called it off', '🏁')
     reset()
-  elseif d.kind == 5 then                                     -- GO: start the countdown
-    if R.state == 'staging' then R.startCountdown() end
+  elseif d.kind == 5 then                                     -- GO: start the countdown, lined up with the host's clock
+    if R.state == 'staging' then
+      local oneWay = clamp(d.react > 0 and d.react or 0.06, 0.005, 0.5)
+      local left = d.t - oneWay                           -- what is left of the host's countdown, minus the trip here
+      if left < 0.4 then
+        send(4, sid) refund()
+        toast('Race called off', 'The connection was too slow to start together', '⚠️')
+        reset() return
+      end
+      R.startCountdown(left)
+      send(10, sid)
+    end
+  elseif d.kind == 8 then                                     -- ping: answer so the host can measure the trip time
+    send(9, sid, { x = d.x })
+  elseif d.kind == 9 then                                     -- pong
+    local t0 = c.pingT and c.pingT[d.x]
+    if t0 then
+      c.pingT[d.x] = nil
+      local rtt = clock() - t0
+      if rtt > 0 and (not c.rtt or rtt < c.rtt) then c.rtt = rtt end
+    end
+  elseif d.kind == 10 then                                    -- they have the countdown
+    c.acked = true
   elseif d.kind == 6 then                                     -- live progress
     c.opp.d, c.opp.v, c.opp.at = d.d, d.v, clock()
   elseif d.kind == 7 then                                     -- they finished
@@ -2170,6 +2205,7 @@ function R.accept()
   if R.state ~= 'invited_in' or not c then return end
   if c.wager > 0 and not XM.spend(c.wager, 'Race wager vs ' .. c.oppName) then toast('Not enough cash', 'You can’t cover the wager', '⚠️') R.decline() return end
   c.escrow = c.wager > 0
+  S.raceEscrow = c.escrow and c.wager or 0
   R.state = 'staging'
   send(2, c.oppSid)
 end
@@ -2187,8 +2223,20 @@ function R.cancel()
 end
 function R.start()
   if R.state ~= 'staging' or R.cur.role ~= 'host' then return end
-  send(5, R.cur.oppSid)
-  R.startCountdown()
+  local c = R.cur
+  R.startCountdown(R.COUNT)
+  c.acked = false
+  local oneWay = clamp((c.rtt or 0.12) / 2, 0.005, 0.5)
+  for _, delay in ipairs({ 0, 1.0, 2.2, 3.4 }) do          -- repeated; each copy says how much countdown is left at the moment it leaves
+    setTimeout(function()
+      if R.cur ~= c or c.acked or R.state ~= 'countdown' or not raceSend then return end
+      NET.send(function()
+        local left = (c.goAt or 0) - clock()
+        if left < 0.6 then return true end
+        return raceSend(build(5, c.oppSid, { t = left, react = oneWay }))
+      end, 1)
+    end, delay)
+  end
 end
 -- quit mid-race: counts as a forfeit
 function R.abort()
@@ -2264,9 +2312,28 @@ function R.update(dt)
       c.resendAt = clock() + 2.5
       push({ kind = 1, to = c.oppSid, rid = c.rid, rtype = c.spec.kind, x = math.floor(c.spec.x), y = math.floor(c.spec.y), wager = c.wager, t = 0, react = 0, d = 0, v = 0, flags = 0 })
     end
+  elseif c and R.state == 'staging' and c.role == 'host' and raceSend and clock() > (c.pingAt or 0) then
+    c.pingAt = clock() + 1.5
+    c.pid = ((c.pid or 0) % 200) + 1
+    c.pingT = c.pingT or {}
+    local id = c.pid
+    NET.send(function() c.pingT[id] = clock() return raceSend(build(8, c.oppSid, { x = id })) end, 1, 'rping')
   elseif c and R.state == 'staging' and c.role == 'guest' and clock() > (c.resendAt or 0) and (c.acceptTries or 0) < 3 then
     c.acceptTries, c.resendAt = (c.acceptTries or 0) + 1, clock() + 2
     send(2, c.oppSid)
+  end
+  -- host: the guest never confirmed the countdown, so call it off for both rather than race out of step
+  if c and R.state == 'countdown' and c.role == 'host' and not c.acked and c.goAt and clock() > c.goAt - 1.2 and R.run and R.run.phase == 'countdown' then
+    send(4, c.oppSid) refund() R.run = nil reset()
+    toast('Race called off', c.oppName .. ' did not get the countdown. Try again.', '⚠️')
+    return
+  end
+  -- keep sending my result until theirs is in, so a lost message can't leave the race unpaid
+  if c and R.state == 'finished' and c.my and not c.outcome and not c.opp.fin and clock() > (c.resAt or 0) and (c.resN or 0) < 16 then
+    c.resAt, c.resN = clock() + 2.5, (c.resN or 0) + 1
+    local res = c.my
+    if res.dnf then push(build(7, c.oppSid, { flags = 1 }))
+    else push(build(7, c.oppSid, { t = res.t, react = res.react, v = res.trap, d = res.top, flags = res.falseStart and 2 or 0 })) end
   end
   if c and R.state == 'staging' and clock() - c.at > 600 then refund() reset() return end
   if ac.getSim().isOnlineRace and clock() > (R.lbAt or 0) then R.lbBroadcast() end
@@ -2277,7 +2344,7 @@ function R.update(dt)
     reset()
   end
   -- opponent never finished: after 30s the win is yours
-  if R.state == 'finished' and c and not c.outcome and c.finishedAt and clock() - c.finishedAt > 30 then resolve(true) end
+  if R.state == 'finished' and c and not c.outcome and c.finishedAt and clock() - c.finishedAt > 50 then resolve(true) end
   R.hudFade = math.max(0, R.hudFade - dt * 0.15)
   local run = R.run
   if not run or run.phase == 'done' then return end
@@ -2370,9 +2437,9 @@ function R.drawHud(cx)
   if run.phase == 'countdown' then
     local left = run.goAt - clock()
     local n = math.ceil(left - 0.2)
-    local label = n >= 1 and tostring(math.min(n, 5)) or 'GO'
+    local label = n >= 1 and tostring(math.min(n, 6)) or 'GO'
     local frac = left - math.floor(left)
-    local col = n >= 1 and mix(rgbm(1, 0.25, 0.2, 1), rgbm(1, 0.85, 0.2, 1), clamp(1 - n / 5, 0, 1)) or rgbm(0.3, 1, 0.5, 1)
+    local col = n >= 1 and mix(rgbm(1, 0.25, 0.2, 1), rgbm(1, 0.85, 0.2, 1), clamp(1 - n / 6, 0, 1)) or rgbm(0.3, 1, 0.5, 1)
     for g = 3, 1, -1 do rect(cx - 70 - g * 6, 6 - g * 4, cx + 70 + g * 6, 96 + g * 4, A(col, 0.08 / g), 30 + g * 6) end
     rect(cx - 70, 6, cx + 70, 96, rgbm(0.03, 0.03, 0.05, 0.85), 30)
     rectLine(cx - 70, 6, cx + 70, 96, A(col, 0.9), 30, 2)

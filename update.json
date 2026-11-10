@@ -1,12 +1,12 @@
 {
-  "version": "1.6.6",
-  "build": 52,
-  "notes": "Players now find each other faster, and you can send any amount of money.",
+  "version": "1.6.7",
+  "build": 53,
+  "notes": "Race app: countdowns now start in sync on both screens, and race results and winnings are more reliable.",
   "files": [
     {
       "path": "ACPhone.lua",
       "url": "https://raw.githubusercontent.com/hackatuner/hackaphone-ac/main/ACPhone/ACPhone.lua",
-      "size": 466760
+      "size": 470172
     },
     {
       "path": "manifest.ini",
